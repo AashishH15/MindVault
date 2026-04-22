@@ -7,3 +7,68 @@ MindVault is a desktop-native knowledge architecture that acts as a persistent, 
 MindVault does not just store personal memory as a huge number of text files rather it organizes knowledge into a set of specialized **Vaults**. When a query is made, a set of **Multi-Agent Collaborative Reinforcement Learning (MACRL)** routing agents extracts the intended context and pulls only relevant information straying across domain boundaries with a set of **Doors** while removing outdated information.
 
 > The goal is not to give an AI a bigger context window, but to give it a better-shaped one.
+
+## Architecture Flow
+
+```mermaid
+flowchart TD
+    %% Custom Styling
+    classDef user fill:#2d3436,stroke:#74b9ff,stroke-width:2px,color:#fff
+    classDef agent fill:#6c5ce7,stroke:#a29bfe,stroke-width:2px,color:#fff
+    classDef memory fill:#00b894,stroke:#55efc4,stroke-width:2px,color:#1e272e
+    classDef privacy fill:#d63031,stroke:#ff7675,stroke-width:2px,color:#fff
+    classDef inference fill:#0984e3,stroke:#74b9ff,stroke-width:2px,color:#fff
+
+    %% 1. Input
+    Canvas(["Unified Canvas (User Query)"]):::user
+    
+    %% 2. Intent & Routing
+    Intent["Intent Classifier & MACRL Routing Agent"]:::agent
+    Canvas --> Intent
+    
+    %% 3. Retrieval
+    subgraph Storage [MindVault Local Graph]
+        direction TB
+        Root[("Root Graph (Always Loaded)")]:::memory
+        Vaults[("Scoped Vaults (e.g., Coding)")]:::memory
+        Doors[("Cross-Vault Doors")]:::memory
+        Root --- Vaults
+        Vaults -.->|"Follows Linked Context"| Doors
+    end
+    
+    Intent -->|"Proposes Scope"| Storage
+    
+    %% 4. Optimization & Privacy
+    subgraph Assembly [Context Assembler]
+        direction TB
+        Decay["Decay Trimmer: Drops stale nodes to fit token budget"]:::agent
+        Stub["Privacy Filter: Converts LOCKED nodes to Pointer Stubs"]:::privacy
+    end
+    
+    Storage --> Decay
+    Decay --> Stub
+    
+    %% 5. Handoff & Inference
+    subgraph InferenceLayer [LLM Inference]
+        direction TB
+        Cloud["Cloud LLM (e.g., OpenAI/Anthropic)"]:::inference
+        Local["Local LLM (e.g., Ollama)"]:::inference
+    end
+    
+    Stub -->|"Injects Safe Context"| Cloud
+    Stub -->|"Injects Full Context"| Local
+    
+    Cloud -->|"Returns output with {{STUBS}}"| Local
+    Local -->|"Resolves stubs with local sensitive data"| Output(["Final Output to Canvas"]):::user
+    
+    %% 6. Continuous Memory Loop
+    subgraph PostSession [Continuous Memory Loop]
+        direction TB
+        MemAgent["Memory Agent (Extracts & Dedupes)"]:::agent
+        Diff["Memory Diff Panel (User Review)"]:::user
+    end
+    
+    Output -->|"Background Update"| MemAgent
+    MemAgent -->|"Proposes Changeset"| Diff
+    Diff -->|"User Accepts -> New Snapshot"| Storage
+```
