@@ -35,7 +35,7 @@ coverage/
 *.lcov
 .nyc_output/
 
-src-tauri/gen/
+core/gen/
 
 *.db
 *.db-journal
@@ -46,5 +46,3 @@ yarn.lock
 pnpm-lock.yaml
 
 Concepts/
-
-README.md
