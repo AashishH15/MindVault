@@ -2,8 +2,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
-use sqlx::sqlite::SqlitePoolOptions;
-use sqlx::SqlitePool;
+use rusqlite::Connection;
 
 fn migration_file_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -13,16 +12,14 @@ fn migration_file_path() -> PathBuf {
         .join("0001_schema_v1.sql")
 }
 
-async fn apply_migration(pool: &SqlitePool) {
+fn apply_migration(conn: &Connection) {
     let migration_sql =
         fs::read_to_string(migration_file_path()).expect("failed to read schema migration file");
-    sqlx::raw_sql(&migration_sql)
-        .execute(pool)
-        .await
+    conn.execute_batch(&migration_sql)
         .expect("failed to execute schema migration");
 }
 
-async fn assert_tables_exist(pool: &SqlitePool) {
+fn assert_tables_exist(conn: &Connection) {
     let required_tables = [
         "vaults",
         "sub_vaults",
@@ -46,17 +43,18 @@ async fn assert_tables_exist(pool: &SqlitePool) {
     ];
 
     for table in required_tables {
-        let exists: Option<i64> =
-            sqlx::query_scalar("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1;")
-                .bind(table)
-                .fetch_optional(pool)
-                .await
-                .expect("failed to query sqlite_master for table");
-        assert!(exists.is_some(), "missing table: {table}");
+        let exists = conn
+            .query_row(
+                "SELECT COUNT(1) FROM sqlite_master WHERE type = 'table' AND name = ?1;",
+                [table],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("failed to query sqlite_master for table");
+        assert!(exists > 0, "missing table: {table}");
     }
 }
 
-async fn assert_indexes_exist(pool: &SqlitePool) {
+fn assert_indexes_exist(conn: &Connection) {
     let required_indexes = [
         "idx_vaults_privacy",
         "idx_vaults_deleted",
@@ -86,17 +84,18 @@ async fn assert_indexes_exist(pool: &SqlitePool) {
     ];
 
     for index in required_indexes {
-        let exists: Option<i64> =
-            sqlx::query_scalar("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?1;")
-                .bind(index)
-                .fetch_optional(pool)
-                .await
-                .expect("failed to query sqlite_master for index");
-        assert!(exists.is_some(), "missing index: {index}");
+        let exists = conn
+            .query_row(
+                "SELECT COUNT(1) FROM sqlite_master WHERE type = 'index' AND name = ?1;",
+                [index],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("failed to query sqlite_master for index");
+        assert!(exists > 0, "missing index: {index}");
     }
 }
 
-async fn assert_foreign_keys_exist(pool: &SqlitePool) {
+fn assert_foreign_keys_exist(conn: &Connection) {
     let fk_expectations: [(&str, &[&str]); 13] = [
         ("sub_vaults", &["vaults"]),
         ("nodes", &["vaults", "sub_vaults"]),
@@ -115,16 +114,16 @@ async fn assert_foreign_keys_exist(pool: &SqlitePool) {
 
     for (table, expected_targets) in fk_expectations {
         let pragma_sql = format!("PRAGMA foreign_key_list({table});");
-        let rows = sqlx::query_as::<_, (i64, i64, String, String, String, String, String, String)>(
-            &pragma_sql,
-        )
-        .fetch_all(pool)
-        .await
-        .expect("failed to read foreign keys");
+        let mut statement = conn
+            .prepare(&pragma_sql)
+            .expect("failed to prepare pragma query");
+        let fk_rows = statement
+            .query_map([], |row| row.get::<_, String>(2))
+            .expect("failed to query foreign keys");
 
         let mut target_counts: HashMap<String, usize> = HashMap::new();
-        for row in rows {
-            let target_table = row.2;
+        for target_table in fk_rows {
+            let target_table = target_table.expect("failed to decode foreign key row");
             *target_counts.entry(target_table).or_insert(0) += 1;
         }
 
@@ -138,15 +137,13 @@ async fn assert_foreign_keys_exist(pool: &SqlitePool) {
     }
 }
 
-#[tokio::test]
-async fn schema_integrity_migration_has_tables_indexes_and_foreign_keys() {
-    let pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect("sqlite::memory:")
-        .await
-        .expect("failed to connect in-memory sqlite");
+#[test]
+fn schema_integrity_migration_has_tables_indexes_and_foreign_keys() {
+    let conn = Connection::open_in_memory().expect("failed to connect in-memory sqlite");
+    conn.pragma_update(None, "foreign_keys", "ON")
+        .expect("failed to enable foreign keys");
 
-    sqlx::query(
+    conn.execute_batch(
         r#"
         CREATE TABLE IF NOT EXISTS schema_migrations (
             version INTEGER PRIMARY KEY,
@@ -155,12 +152,10 @@ async fn schema_integrity_migration_has_tables_indexes_and_foreign_keys() {
         );
         "#,
     )
-    .execute(&pool)
-    .await
     .expect("failed to create schema_migrations table");
 
-    apply_migration(&pool).await;
-    assert_tables_exist(&pool).await;
-    assert_indexes_exist(&pool).await;
-    assert_foreign_keys_exist(&pool).await;
+    apply_migration(&conn);
+    assert_tables_exist(&conn);
+    assert_indexes_exist(&conn);
+    assert_foreign_keys_exist(&conn);
 }

@@ -1,12 +1,11 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use sqlx::sqlite::SqlitePoolOptions;
-use sqlx::SqlitePool;
+use rusqlite::{params, Connection};
 use tauri::Manager;
 
 struct DbState {
-    pool: SqlitePool,
+    db_path: PathBuf,
 }
 
 #[tauri::command]
@@ -14,27 +13,18 @@ fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from MindVault!", name)
 }
 
-fn init_sqlite(app: &tauri::App) -> Result<SqlitePool, Box<dyn std::error::Error>> {
+fn sqlite_db_path(app: &tauri::App) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let app_data_dir = app.path().app_data_dir()?;
     fs::create_dir_all(&app_data_dir)?;
+    Ok(app_data_dir.join("mindvault.db"))
+}
 
-    let db_path = app_data_dir.join("mindvault.db");
-    let database_url = format!("sqlite:{}", db_path.to_string_lossy());
-
-    let pool = tauri::async_runtime::block_on(async {
-        SqlitePoolOptions::new()
-            .max_connections(5)
-            .connect(&database_url)
-            .await
-    })?;
-
-    tauri::async_runtime::block_on(async {
-        sqlx::query("PRAGMA foreign_keys = ON;")
-            .execute(&pool)
-            .await
-    })?;
-
-    Ok(pool)
+fn open_connection(db_path: &Path) -> Result<Connection, String> {
+    let conn = Connection::open(db_path)
+        .map_err(|err| format!("Failed opening database {}: {err}", db_path.display()))?;
+    conn.pragma_update(None, "foreign_keys", "ON")
+        .map_err(|err| format!("Failed enabling foreign keys: {err}"))?;
+    Ok(conn)
 }
 
 fn migrations_dir() -> PathBuf {
@@ -102,8 +92,8 @@ fn load_migration_files() -> Result<Vec<(i64, String, PathBuf)>, String> {
     Ok(migrations)
 }
 
-async fn run_migrations(pool: &SqlitePool) -> Result<(), String> {
-    sqlx::query(
+fn run_migrations(conn: &mut Connection) -> Result<(), String> {
+    conn.execute_batch(
         r#"
         CREATE TABLE IF NOT EXISTS schema_migrations (
             version INTEGER PRIMARY KEY,
@@ -112,17 +102,16 @@ async fn run_migrations(pool: &SqlitePool) -> Result<(), String> {
         );
         "#,
     )
-    .execute(pool)
-    .await
     .map_err(|err| format!("Failed creating schema_migrations table: {err}"))?;
 
     for (version, name, path) in load_migration_files()? {
-        let already_applied: i64 =
-            sqlx::query_scalar("SELECT COUNT(1) FROM schema_migrations WHERE version = ?1;")
-                .bind(version)
-                .fetch_one(pool)
-                .await
-                .map_err(|err| format!("Failed checking migration {version}: {err}"))?;
+        let already_applied: i64 = conn
+            .query_row(
+                "SELECT COUNT(1) FROM schema_migrations WHERE version = ?1;",
+                [version],
+                |row| row.get(0),
+            )
+            .map_err(|err| format!("Failed checking migration {version}: {err}"))?;
 
         if already_applied > 0 {
             continue;
@@ -131,38 +120,32 @@ async fn run_migrations(pool: &SqlitePool) -> Result<(), String> {
         let sql = fs::read_to_string(&path)
             .map_err(|err| format!("Failed reading {}: {err}", path.display()))?;
 
-        let mut tx = pool
-            .begin()
-            .await
+        let tx = conn
+            .transaction()
             .map_err(|err| format!("Failed starting migration transaction: {err}"))?;
 
-        sqlx::raw_sql(&sql)
-            .execute(&mut *tx)
-            .await
+        tx.execute_batch(&sql)
             .map_err(|err| format!("Migration {} failed: {err}", path.display()))?;
 
-        sqlx::query("INSERT INTO schema_migrations (version, name) VALUES (?1, ?2);")
-            .bind(version)
-            .bind(&name)
-            .execute(&mut *tx)
-            .await
-            .map_err(|err| format!("Failed recording migration {}: {err}", path.display()))?;
+        tx.execute(
+            "INSERT INTO schema_migrations (version, name) VALUES (?1, ?2);",
+            params![version, name],
+        )
+        .map_err(|err| format!("Failed recording migration {}: {err}", path.display()))?;
 
         tx.commit()
-            .await
             .map_err(|err| format!("Failed committing migration transaction: {err}"))?;
     }
 
     Ok(())
 }
 
-async fn run_seed_data(pool: &SqlitePool) -> Result<(), String> {
-    let mut tx = pool
-        .begin()
-        .await
+fn run_seed_data(conn: &mut Connection) -> Result<(), String> {
+    let tx = conn
+        .transaction()
         .map_err(|err| format!("Failed starting seed transaction: {err}"))?;
 
-    sqlx::query(
+    tx.execute_batch(
         "INSERT OR IGNORE INTO settings (key, value, scope) VALUES
             ('default_model', '\"local\"', 'global'),
             ('local_model_endpoint', '\"http://localhost:11434\"', 'global'),
@@ -171,52 +154,50 @@ async fn run_seed_data(pool: &SqlitePool) -> Result<(), String> {
             ('snapshot_on_session_end', 'true', 'global'),
             ('onboarding_complete', 'false', 'global');",
     )
-    .execute(&mut *tx)
-    .await
     .map_err(|err| format!("Failed inserting default settings: {err}"))?;
 
-    sqlx::query(
+    tx.execute(
         "INSERT OR IGNORE INTO vaults (id, name, icon, description, privacy_tier, decay_rate, sort_order, meta)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8);",
+        params![
+            "vault_root_graph",
+            "Root Graph",
+            "root",
+            "Always-loaded cross-vault context graph.",
+            "open",
+            "standard",
+            0_i64,
+            "{}"
+        ],
     )
-    .bind("vault_root_graph")
-    .bind("Root Graph")
-    .bind("🌐")
-    .bind("Always-loaded cross-vault context graph.")
-    .bind("open")
-    .bind("standard")
-    .bind(0_i64)
-    .bind("{}")
-    .execute(&mut *tx)
-    .await
     .map_err(|err| format!("Failed inserting Root Graph vault: {err}"))?;
 
     tx.commit()
-        .await
         .map_err(|err| format!("Failed committing seed transaction: {err}"))?;
 
     Ok(())
 }
 
 #[tauri::command]
-async fn db_ping(state: tauri::State<'_, DbState>) -> Result<String, String> {
-    sqlx::query_scalar::<_, String>("SELECT sqlite_version();")
-        .fetch_one(&state.pool)
-        .await
-        .map(|version| format!("SQLite connected (version {version})"))
-        .map_err(|err| format!("SQLite ping failed: {err}"))
+fn db_ping(state: tauri::State<'_, DbState>) -> Result<String, String> {
+    let conn = open_connection(&state.db_path)?;
+    let version: String = conn
+        .query_row("SELECT sqlite_version();", [], |row| row.get(0))
+        .map_err(|err| format!("SQLite ping failed: {err}"))?;
+    Ok(format!("SQLite connected (version {version})"))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
-            let sqlite_pool = init_sqlite(app)?;
-            tauri::async_runtime::block_on(run_migrations(&sqlite_pool))
+            let db_path = sqlite_db_path(app)?;
+            let mut conn = open_connection(&db_path)
                 .map_err(|err| -> Box<dyn std::error::Error> { err.into() })?;
-            tauri::async_runtime::block_on(run_seed_data(&sqlite_pool))
+            run_migrations(&mut conn)
                 .map_err(|err| -> Box<dyn std::error::Error> { err.into() })?;
-            app.manage(DbState { pool: sqlite_pool });
+            run_seed_data(&mut conn).map_err(|err| -> Box<dyn std::error::Error> { err.into() })?;
+            app.manage(DbState { db_path });
             Ok(())
         })
         .plugin(tauri_plugin_opener::init())
