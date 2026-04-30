@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "description": "Personalized AI Memory Architecture — A Context-Aware Knowledge System for Local and Cloud LLMs",
   "author": "Aashish",
+  "license": "AGPL-3.0-or-later",
   "type": "module",
   "scripts": {
     "dev": "vite",
