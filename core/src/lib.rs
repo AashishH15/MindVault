@@ -156,6 +156,48 @@ async fn run_migrations(pool: &SqlitePool) -> Result<(), String> {
     Ok(())
 }
 
+async fn run_seed_data(pool: &SqlitePool) -> Result<(), String> {
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|err| format!("Failed starting seed transaction: {err}"))?;
+
+    sqlx::query(
+        "INSERT OR IGNORE INTO settings (key, value, scope) VALUES
+            ('default_model', '\"local\"', 'global'),
+            ('local_model_endpoint', '\"http://localhost:11434\"', 'global'),
+            ('decay_check_interval_h', '24', 'global'),
+            ('auto_trim_threshold', '0.25', 'global'),
+            ('snapshot_on_session_end', 'true', 'global'),
+            ('onboarding_complete', 'false', 'global');",
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(|err| format!("Failed inserting default settings: {err}"))?;
+
+    sqlx::query(
+        "INSERT OR IGNORE INTO vaults (id, name, icon, description, privacy_tier, decay_rate, sort_order, meta)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8);",
+    )
+    .bind("vault_root_graph")
+    .bind("Root Graph")
+    .bind("🌐")
+    .bind("Always-loaded cross-vault context graph.")
+    .bind("open")
+    .bind("standard")
+    .bind(0_i64)
+    .bind("{}")
+    .execute(&mut *tx)
+    .await
+    .map_err(|err| format!("Failed inserting Root Graph vault: {err}"))?;
+
+    tx.commit()
+        .await
+        .map_err(|err| format!("Failed committing seed transaction: {err}"))?;
+
+    Ok(())
+}
+
 #[tauri::command]
 async fn db_ping(state: tauri::State<'_, DbState>) -> Result<String, String> {
     sqlx::query_scalar::<_, String>("SELECT sqlite_version();")
@@ -171,6 +213,8 @@ pub fn run() {
         .setup(|app| {
             let sqlite_pool = init_sqlite(app)?;
             tauri::async_runtime::block_on(run_migrations(&sqlite_pool))
+                .map_err(|err| -> Box<dyn std::error::Error> { err.into() })?;
+            tauri::async_runtime::block_on(run_seed_data(&sqlite_pool))
                 .map_err(|err| -> Box<dyn std::error::Error> { err.into() })?;
             app.manage(DbState { pool: sqlite_pool });
             Ok(())
