@@ -50,8 +50,12 @@ fn load_migration_files() -> Result<Vec<(i64, String, PathBuf)>, String> {
         return Ok(Vec::new());
     }
 
-    let entries = fs::read_dir(&dir)
-        .map_err(|err| format!("Failed to read migrations directory {}: {err}", dir.display()))?;
+    let entries = fs::read_dir(&dir).map_err(|err| {
+        format!(
+            "Failed to read migrations directory {}: {err}",
+            dir.display()
+        )
+    })?;
 
     let mut migrations = Vec::new();
 
@@ -124,8 +128,8 @@ async fn run_migrations(pool: &SqlitePool) -> Result<(), String> {
             continue;
         }
 
-        let sql =
-            fs::read_to_string(&path).map_err(|err| format!("Failed reading {}: {err}", path.display()))?;
+        let sql = fs::read_to_string(&path)
+            .map_err(|err| format!("Failed reading {}: {err}", path.display()))?;
 
         let mut tx = pool
             .begin()
