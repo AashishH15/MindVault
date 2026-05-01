@@ -1,16 +1,36 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, Row};
+use serde::Serialize;
 use tauri::Manager;
+
+mod ipc_types;
+use ipc_types::{Node, NodeCreateInput, NodeUpdateInput, Vault, VaultCreateInput};
 
 struct DbState {
     db_path: PathBuf,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+enum IpcResponse<T> {
+    Ok { ok: T },
+    Err { err: String },
+}
+
+fn into_ipc<T>(result: Result<T, String>) -> IpcResponse<T> {
+    match result {
+        Ok(value) => IpcResponse::Ok { ok: value },
+        Err(err) => IpcResponse::Err { err },
+    }
+}
+
 #[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from MindVault!", name)
+fn greet(name: &str) -> IpcResponse<String> {
+    IpcResponse::Ok {
+        ok: format!("Hello, {}! You've been greeted from MindVault!", name),
+    }
 }
 
 fn sqlite_db_path(app: &tauri::App) -> Result<PathBuf, Box<dyn std::error::Error>> {
@@ -25,6 +45,110 @@ fn open_connection(db_path: &Path) -> Result<Connection, String> {
     conn.pragma_update(None, "foreign_keys", "ON")
         .map_err(|err| format!("Failed enabling foreign keys: {err}"))?;
     Ok(conn)
+}
+
+fn generate_id(conn: &Connection, prefix: &str) -> Result<String, String> {
+    conn.query_row(
+        "SELECT ?1 || '_' || lower(hex(randomblob(8)));",
+        [prefix],
+        |row| row.get(0),
+    )
+    .map_err(|err| format!("Failed generating id: {err}"))
+}
+
+fn vault_from_row(row: &Row<'_>) -> rusqlite::Result<Vault> {
+    Ok(Vault {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        icon: row.get(2)?,
+        description: row.get(3)?,
+        privacy_tier: row.get(4)?,
+        decay_rate: row.get(5)?,
+        summary_node_id: row.get(6)?,
+        sort_order: row.get(7)?,
+        created_at: row.get(8)?,
+        updated_at: row.get(9)?,
+        deleted_at: row.get(10)?,
+        meta: row.get(11)?,
+    })
+}
+
+fn node_from_row(row: &Row<'_>) -> rusqlite::Result<Node> {
+    Ok(Node {
+        id: row.get(0)?,
+        vault_id: row.get(1)?,
+        sub_vault_id: row.get(2)?,
+        node_type: row.get(3)?,
+        title: row.get(4)?,
+        summary: row.get(5)?,
+        detail: row.get(6)?,
+        source: row.get(7)?,
+        source_type: row.get(8)?,
+        privacy_tier: row.get(9)?,
+        decay: row.get(10)?,
+        version: row.get(11)?,
+        is_archived: row.get::<_, i64>(12)? != 0,
+        created_at: row.get(13)?,
+        updated_at: row.get(14)?,
+        last_accessed: row.get(15)?,
+        deleted_at: row.get(16)?,
+        meta: row.get(17)?,
+    })
+}
+
+fn fetch_vault_by_id(conn: &Connection, vault_id: &str) -> Result<Vault, String> {
+    conn.query_row(
+        "SELECT id, name, icon, description, privacy_tier, decay_rate, summary_node_id, sort_order,
+                created_at, updated_at, deleted_at, meta
+         FROM vaults
+         WHERE id = ?1;",
+        [vault_id],
+        vault_from_row,
+    )
+    .map_err(|err| format!("Failed fetching vault {vault_id}: {err}"))
+}
+
+fn fetch_node_by_id(conn: &Connection, node_id: &str) -> Result<Option<Node>, String> {
+    conn.query_row(
+        "SELECT id, vault_id, sub_vault_id, node_type, title, summary, detail, source, source_type,
+                privacy_tier, decay, version, is_archived, created_at, updated_at, last_accessed,
+                deleted_at, meta
+         FROM nodes
+         WHERE id = ?1;",
+        [node_id],
+        node_from_row,
+    )
+    .map(Some)
+    .or_else(|err| {
+        if matches!(err, rusqlite::Error::QueryReturnedNoRows) {
+            Ok(None)
+        } else {
+            Err(format!("Failed fetching node {node_id}: {err}"))
+        }
+    })
+}
+
+fn fetch_nodes(conn: &Connection) -> Result<Vec<Node>, String> {
+    let mut statement = conn
+        .prepare(
+            "SELECT id, vault_id, sub_vault_id, node_type, title, summary, detail, source, source_type,
+                    privacy_tier, decay, version, is_archived, created_at, updated_at, last_accessed,
+                    deleted_at, meta
+             FROM nodes
+             WHERE deleted_at IS NULL
+             ORDER BY created_at DESC;",
+        )
+        .map_err(|err| format!("Failed preparing node_list query: {err}"))?;
+
+    let rows = statement
+        .query_map([], node_from_row)
+        .map_err(|err| format!("Failed querying nodes: {err}"))?;
+
+    let mut nodes = Vec::new();
+    for row in rows {
+        nodes.push(row.map_err(|err| format!("Failed decoding node row: {err}"))?);
+    }
+    Ok(nodes)
 }
 
 fn migrations_dir() -> PathBuf {
@@ -179,12 +303,234 @@ fn run_seed_data(conn: &mut Connection) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn db_ping(state: tauri::State<'_, DbState>) -> Result<String, String> {
-    let conn = open_connection(&state.db_path)?;
-    let version: String = conn
-        .query_row("SELECT sqlite_version();", [], |row| row.get(0))
-        .map_err(|err| format!("SQLite ping failed: {err}"))?;
-    Ok(format!("SQLite connected (version {version})"))
+fn db_ping(state: tauri::State<'_, DbState>) -> IpcResponse<String> {
+    into_ipc((|| {
+        let conn = open_connection(&state.db_path)?;
+        let version: String = conn
+            .query_row("SELECT sqlite_version();", [], |row| row.get(0))
+            .map_err(|err| format!("SQLite ping failed: {err}"))?;
+        Ok(format!("SQLite connected (version {version})"))
+    })())
+}
+
+#[tauri::command]
+fn vault_create(input: VaultCreateInput, state: tauri::State<'_, DbState>) -> IpcResponse<Vault> {
+    into_ipc((|| {
+        let mut conn = open_connection(&state.db_path)?;
+        let tx = conn
+            .transaction()
+            .map_err(|err| format!("Failed starting vault_create transaction: {err}"))?;
+
+        let id = generate_id(&tx, "vault")?;
+        let privacy_tier = input.privacy_tier.unwrap_or_else(|| "open".to_string());
+        let decay_rate = input.decay_rate.unwrap_or_else(|| "standard".to_string());
+        let sort_order = input.sort_order.unwrap_or(0);
+        let meta = input.meta.unwrap_or_else(|| "{}".to_string());
+
+        tx.execute(
+            "INSERT INTO vaults (id, name, icon, description, privacy_tier, decay_rate, sort_order, meta)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8);",
+            params![
+                id,
+                input.name,
+                input.icon,
+                input.description,
+                privacy_tier,
+                decay_rate,
+                sort_order,
+                meta
+            ],
+        )
+        .map_err(|err| format!("Failed inserting vault: {err}"))?;
+
+        tx.commit()
+            .map_err(|err| format!("Failed committing vault_create: {err}"))?;
+
+        fetch_vault_by_id(&conn, &id)
+    })())
+}
+
+#[tauri::command]
+fn vault_list(state: tauri::State<'_, DbState>) -> IpcResponse<Vec<Vault>> {
+    into_ipc((|| {
+        let conn = open_connection(&state.db_path)?;
+        let mut statement = conn
+            .prepare(
+                "SELECT id, name, icon, description, privacy_tier, decay_rate, summary_node_id, sort_order,
+                        created_at, updated_at, deleted_at, meta
+                 FROM vaults
+                 WHERE deleted_at IS NULL
+                 ORDER BY sort_order ASC, created_at ASC;",
+            )
+            .map_err(|err| format!("Failed preparing vault_list query: {err}"))?;
+
+        let rows = statement
+            .query_map([], vault_from_row)
+            .map_err(|err| format!("Failed querying vaults: {err}"))?;
+
+        let mut vaults = Vec::new();
+        for row in rows {
+            vaults.push(row.map_err(|err| format!("Failed decoding vault row: {err}"))?);
+        }
+        Ok(vaults)
+    })())
+}
+
+#[tauri::command]
+fn node_create(input: NodeCreateInput, state: tauri::State<'_, DbState>) -> IpcResponse<Node> {
+    into_ipc((|| {
+        let mut conn = open_connection(&state.db_path)?;
+        let tx = conn
+            .transaction()
+            .map_err(|err| format!("Failed starting node_create transaction: {err}"))?;
+
+        let id = generate_id(&tx, "node")?;
+        let node_type = input.node_type.unwrap_or_else(|| "concept".to_string());
+        let decay = input.decay.unwrap_or_else(|| {
+            "{\"score\":1.0,\"rate\":\"standard\",\"pinned\":false,\"access_count_30d\":0,\"access_count_90d\":0,\"age_days\":0,\"auto_trim_threshold\":0.25}".to_string()
+        });
+        let meta = input.meta.unwrap_or_else(|| "{}".to_string());
+
+        tx.execute(
+            "INSERT INTO nodes (
+                id, vault_id, sub_vault_id, node_type, title, summary, detail, source, source_type,
+                privacy_tier, decay, meta
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12);",
+            params![
+                id,
+                input.vault_id,
+                input.sub_vault_id,
+                node_type,
+                input.title,
+                input.summary,
+                input.detail,
+                input.source,
+                input.source_type,
+                input.privacy_tier,
+                decay,
+                meta
+            ],
+        )
+        .map_err(|err| format!("Failed inserting node: {err}"))?;
+
+        tx.commit()
+            .map_err(|err| format!("Failed committing node_create: {err}"))?;
+
+        fetch_node_by_id(&conn, &id)
+            .and_then(|node| node.ok_or_else(|| "Node not found after insert".to_string()))
+    })())
+}
+
+#[tauri::command]
+fn node_get(node_id: String, state: tauri::State<'_, DbState>) -> IpcResponse<Option<Node>> {
+    into_ipc((|| {
+        let conn = open_connection(&state.db_path)?;
+        match fetch_node_by_id(&conn, &node_id)? {
+            Some(node) if node.deleted_at.is_none() => Ok(Some(node)),
+            _ => Ok(None),
+        }
+    })())
+}
+
+#[tauri::command]
+fn node_list(state: tauri::State<'_, DbState>) -> IpcResponse<Vec<Node>> {
+    into_ipc((|| {
+        let conn = open_connection(&state.db_path)?;
+        fetch_nodes(&conn)
+    })())
+}
+
+#[tauri::command]
+fn node_update(input: NodeUpdateInput, state: tauri::State<'_, DbState>) -> IpcResponse<Node> {
+    into_ipc((|| {
+        let mut conn = open_connection(&state.db_path)?;
+        let tx = conn
+            .transaction()
+            .map_err(|err| format!("Failed starting node_update transaction: {err}"))?;
+
+        let current = fetch_node_by_id(&tx, &input.id)?
+            .filter(|node| node.deleted_at.is_none())
+            .ok_or_else(|| format!("Node not found: {}", input.id))?;
+
+        let next_vault_id = input.vault_id.unwrap_or(current.vault_id);
+        let next_sub_vault_id = input.sub_vault_id.or(current.sub_vault_id);
+        let next_node_type = input.node_type.unwrap_or(current.node_type);
+        let next_title = input.title.unwrap_or(current.title);
+        let next_summary = input.summary.unwrap_or(current.summary);
+        let next_detail = input.detail.or(current.detail);
+        let next_source = input.source.or(current.source);
+        let next_source_type = input.source_type.or(current.source_type);
+        let next_privacy_tier = input.privacy_tier.or(current.privacy_tier);
+        let next_decay = input.decay.unwrap_or(current.decay);
+        let next_is_archived = if input.is_archived.unwrap_or(current.is_archived) {
+            1_i64
+        } else {
+            0_i64
+        };
+        let next_meta = input.meta.unwrap_or(current.meta);
+        let next_version = current.version + 1;
+
+        tx.execute(
+            "UPDATE nodes
+             SET vault_id = ?2,
+                 sub_vault_id = ?3,
+                 node_type = ?4,
+                 title = ?5,
+                 summary = ?6,
+                 detail = ?7,
+                 source = ?8,
+                 source_type = ?9,
+                 privacy_tier = ?10,
+                 decay = ?11,
+                 version = ?12,
+                 is_archived = ?13,
+                 updated_at = datetime('now'),
+                 meta = ?14
+             WHERE id = ?1 AND deleted_at IS NULL;",
+            params![
+                input.id,
+                next_vault_id,
+                next_sub_vault_id,
+                next_node_type,
+                next_title,
+                next_summary,
+                next_detail,
+                next_source,
+                next_source_type,
+                next_privacy_tier,
+                next_decay,
+                next_version,
+                next_is_archived,
+                next_meta
+            ],
+        )
+        .map_err(|err| format!("Failed updating node: {err}"))?;
+
+        tx.commit()
+            .map_err(|err| format!("Failed committing node_update: {err}"))?;
+
+        fetch_node_by_id(&conn, &input.id).and_then(|node| {
+            node.filter(|n| n.deleted_at.is_none())
+                .ok_or_else(|| format!("Node not found after update: {}", input.id))
+        })
+    })())
+}
+
+#[tauri::command]
+fn node_delete(node_id: String, state: tauri::State<'_, DbState>) -> IpcResponse<bool> {
+    into_ipc((|| {
+        let conn = open_connection(&state.db_path)?;
+        let affected = conn
+            .execute(
+                "UPDATE nodes
+                 SET deleted_at = datetime('now'),
+                     updated_at = datetime('now')
+                 WHERE id = ?1 AND deleted_at IS NULL;",
+                [node_id],
+            )
+            .map_err(|err| format!("Failed deleting node: {err}"))?;
+        Ok(affected > 0)
+    })())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -201,7 +547,17 @@ pub fn run() {
             Ok(())
         })
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![greet, db_ping])
+        .invoke_handler(tauri::generate_handler![
+            greet,
+            db_ping,
+            vault_create,
+            vault_list,
+            node_create,
+            node_get,
+            node_list,
+            node_update,
+            node_delete
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
