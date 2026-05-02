@@ -37,6 +37,10 @@ export function vaultList() {
   return invokeTyped<Vault[]>("vault_list");
 }
 
+export function vaultDelete(vaultId: string) {
+  return invokeTyped<boolean>("vault_delete", { vaultId });
+}
+
 export function nodeCreate(input: NodeCreateInput) {
   return invokeTyped<Node>("node_create", { input });
 }

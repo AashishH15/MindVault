@@ -1,56 +1,132 @@
-import { useState } from "react";
-import reactLogo from "./assets/react.svg";
-import { greet } from "./ipc";
-import DebugPanel from "./DebugPanel";
+import { useState, type MouseEvent } from "react";
+import ErrorBoundary from "./components/ErrorBoundary";
+import NodeEditor from "./components/NodeEditor";
+import NodeList from "./components/NodeList";
+import VaultSidebar from "./components/VaultSidebar";
 import "./App.css";
 
 function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
+  const [omniboxText, setOmniboxText] = useState<string>("");
+  const [selectedVaultId, setSelectedVaultId] = useState<string | null>(null);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [leftPaneVisible, setLeftPaneVisible] = useState<boolean>(false);
+  const [rightPaneVisible, setRightPaneVisible] = useState<boolean>(false);
+  const [vaultRefreshKey, setVaultRefreshKey] = useState<number>(0);
+  const [nodeRefreshKey, setNodeRefreshKey] = useState<number>(0);
+  const leftPaneExpanded = leftPaneVisible || selectedNodeId !== null;
 
-  async function onGreet() {
-    const result = await greet(name);
-    if ("ok" in result) {
-      setGreetMsg(result.ok);
-      return;
+  function closeAllPanes() {
+    setLeftPaneVisible(false);
+    setRightPaneVisible(false);
+  }
+
+  function onZenCanvasClick(event: MouseEvent<HTMLElement>) {
+    if (event.target === event.currentTarget) {
+      closeAllPanes();
     }
-    setGreetMsg(result.err);
+  }
+
+  function onSelectVault(vaultId: string) {
+    setSelectedVaultId(vaultId);
+    setSelectedNodeId(null);
+    setNodeRefreshKey((value) => value + 1);
+  }
+
+  function onVaultCreated(vaultId: string) {
+    onSelectVault(vaultId);
+    setVaultRefreshKey((value) => value + 1);
+  }
+
+  function onVaultDeleted(vaultId: string) {
+    if (selectedVaultId === vaultId) {
+      setSelectedVaultId(null);
+      setSelectedNodeId(null);
+      setRightPaneVisible(false);
+    }
+    setVaultRefreshKey((value) => value + 1);
+    setNodeRefreshKey((value) => value + 1);
+  }
+
+  function onSelectNode(nodeId: string) {
+    setSelectedNodeId(nodeId);
+    setRightPaneVisible(true);
+  }
+
+  function onNodeCreated(nodeId: string) {
+    setSelectedNodeId(nodeId);
+    setRightPaneVisible(true);
+    setNodeRefreshKey((value) => value + 1);
+  }
+
+  function onNodeDeleted(nodeId: string) {
+    if (selectedNodeId === nodeId) {
+      setSelectedNodeId(null);
+      setRightPaneVisible(false);
+    }
+    setNodeRefreshKey((value) => value + 1);
   }
 
   return (
-    <main className="container">
-      <h1>MindVault</h1>
+    <ErrorBoundary>
+      <main className="hybrid-shell">
+        <section className="zen-canvas" onClick={onZenCanvasClick}>
+          <h1>MindVault</h1>
+          <textarea
+            className="omnibox"
+            value={omniboxText}
+            onChange={(e) => setOmniboxText(e.target.value)}
+            placeholder="Ask, capture, or think..."
+          />
+        </section>
 
-      <div className="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
+        <div
+          className={`hover-zone left-zone ${leftPaneExpanded ? "expanded" : ""}`}
+          onMouseEnter={() => setLeftPaneVisible(true)}
+          onMouseLeave={() => setLeftPaneVisible(false)}
+        >
+          <div className="edge-trigger left" />
+          <div className={`pane-wrap left ${leftPaneExpanded ? "show" : ""}`}>
+            {!selectedVaultId ? (
+              <VaultSidebar
+                selectedVaultId={selectedVaultId}
+                onSelectVault={onSelectVault}
+                onVaultCreated={onVaultCreated}
+                onVaultDeleted={onVaultDeleted}
+                refreshKey={vaultRefreshKey}
+              />
+            ) : (
+              <NodeList
+                selectedVaultId={selectedVaultId}
+                selectedNodeId={selectedNodeId}
+                onSelectNode={onSelectNode}
+                onNodeCreated={onNodeCreated}
+                onBack={() => {
+                  setSelectedVaultId(null);
+                  setSelectedNodeId(null);
+                }}
+                refreshKey={nodeRefreshKey}
+              />
+            )}
+          </div>
+        </div>
 
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          onGreet();
-        }}
-      >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
-        />
-        <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg}</p>
-      <DebugPanel />
-    </main>
+        <div
+          className={`hover-zone right-zone ${rightPaneVisible ? "expanded" : ""}`}
+          onMouseEnter={() => setRightPaneVisible(true)}
+          onMouseLeave={() => setRightPaneVisible(false)}
+        >
+          <div className={`pane-wrap right ${rightPaneVisible ? "show" : ""}`}>
+            <NodeEditor
+              selectedNodeId={selectedNodeId}
+              onNodeDeleted={onNodeDeleted}
+              onSaveSuccess={() => setNodeRefreshKey((value) => value + 1)}
+              refreshKey={nodeRefreshKey}
+            />
+          </div>
+          <div className="edge-trigger right" />
+        </div>
+      </main>
+    </ErrorBoundary>
   );
 }
 

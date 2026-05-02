@@ -1,4 +1,4 @@
-import { vaultCreate, vaultList, type Vault, type VaultCreateInput } from "../ipc";
+import { vaultCreate, vaultDelete, vaultList, type Vault, type VaultCreateInput } from "../ipc";
 import { unwrapIpcResult } from "./ipcResult";
 
 export async function createVault(input: VaultCreateInput): Promise<Vault> {
@@ -7,4 +7,8 @@ export async function createVault(input: VaultCreateInput): Promise<Vault> {
 
 export async function listVaults(): Promise<Vault[]> {
   return unwrapIpcResult(vaultList());
+}
+
+export async function deleteVault(vaultId: string): Promise<boolean> {
+  return unwrapIpcResult(vaultDelete(vaultId));
 }

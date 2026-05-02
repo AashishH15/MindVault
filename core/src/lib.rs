@@ -377,6 +377,23 @@ fn vault_list(state: tauri::State<'_, DbState>) -> IpcResponse<Vec<Vault>> {
 }
 
 #[tauri::command]
+fn vault_delete(vault_id: String, state: tauri::State<'_, DbState>) -> IpcResponse<bool> {
+    into_ipc((|| {
+        let conn = open_connection(&state.db_path)?;
+        let affected = conn
+            .execute(
+                "UPDATE vaults
+                 SET deleted_at = datetime('now'),
+                     updated_at = datetime('now')
+                 WHERE id = ?1 AND deleted_at IS NULL;",
+                [vault_id],
+            )
+            .map_err(|err| format!("Failed deleting vault: {err}"))?;
+        Ok(affected > 0)
+    })())
+}
+
+#[tauri::command]
 fn node_create(input: NodeCreateInput, state: tauri::State<'_, DbState>) -> IpcResponse<Node> {
     into_ipc((|| {
         let mut conn = open_connection(&state.db_path)?;
@@ -552,6 +569,7 @@ pub fn run() {
             db_ping,
             vault_create,
             vault_list,
+            vault_delete,
             node_create,
             node_get,
             node_list,
