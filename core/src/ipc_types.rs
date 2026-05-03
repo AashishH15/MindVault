@@ -125,6 +125,25 @@ pub struct NodeUpdateInput {
     pub meta: Option<String>,
 }
 
+#[derive(Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../ui/types/generated/")]
+pub struct Tag {
+    pub id: String,
+    pub name: String,
+    pub color: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../ui/types/generated/")]
+pub struct TagCreateInput {
+    pub name: String,
+    #[ts(optional)]
+    pub color: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -136,5 +155,7 @@ mod tests {
         Node::export().expect("failed to export Node");
         NodeCreateInput::export().expect("failed to export NodeCreateInput");
         NodeUpdateInput::export().expect("failed to export NodeUpdateInput");
+        Tag::export().expect("failed to export Tag");
+        TagCreateInput::export().expect("failed to export TagCreateInput");
     }
 }

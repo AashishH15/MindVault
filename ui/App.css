@@ -400,6 +400,79 @@ body,
   color: #8fa0c8;
 }
 
+.tag-wrapper {
+  position: relative;
+  display: grid;
+  gap: 8px;
+}
+
+.tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tag-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid rgba(143, 184, 255, 0.25);
+  background: rgba(143, 184, 255, 0.1);
+  color: #dbe7ff;
+  border-radius: 999px;
+  padding: 4px 9px;
+  font-size: 0.78rem;
+}
+
+.tag-pill button {
+  border: none;
+  background: transparent;
+  color: #dbe7ff;
+  cursor: pointer;
+  font-size: 0.82rem;
+  line-height: 1;
+  padding: 0;
+}
+
+.tag-input {
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 10px;
+  background: rgba(5, 8, 14, 0.55);
+  color: #eff3ff;
+  padding: 8px 10px;
+  font-size: 0.9rem;
+}
+
+.tag-dropdown {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 50;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 10px;
+  background: rgba(12, 16, 28, 0.98);
+  padding: 6px;
+  display: grid;
+  gap: 4px;
+}
+
+.tag-dropdown button {
+  width: 100%;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: #d2dcf5;
+  text-align: left;
+  cursor: pointer;
+  padding: 6px 8px;
+}
+
+.tag-dropdown button:hover {
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+}
+
 .editor-form input,
 .editor-form textarea {
   border: 1px solid rgba(255, 255, 255, 0.18);

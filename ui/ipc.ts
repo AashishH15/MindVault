@@ -3,12 +3,22 @@ import type {
   Node,
   NodeCreateInput,
   NodeUpdateInput,
+  Tag,
+  TagCreateInput,
   Vault,
   VaultCreateInput,
 } from "./types/generated";
 
 export type IpcResult<T> = { ok: T } | { err: string };
-export type { Node, NodeCreateInput, NodeUpdateInput, Vault, VaultCreateInput };
+export type {
+  Node,
+  NodeCreateInput,
+  NodeUpdateInput,
+  Tag,
+  TagCreateInput,
+  Vault,
+  VaultCreateInput,
+};
 
 async function invokeTyped<T>(
   command: string,
@@ -59,4 +69,24 @@ export function nodeUpdate(input: NodeUpdateInput) {
 
 export function nodeDelete(nodeId: string) {
   return invokeTyped<boolean>("node_delete", { nodeId });
+}
+
+export function tagList() {
+  return invokeTyped<Tag[]>("tag_list");
+}
+
+export function tagCreate(input: TagCreateInput) {
+  return invokeTyped<Tag>("tag_create", { input });
+}
+
+export function nodeTagsGet(nodeId: string) {
+  return invokeTyped<Tag[]>("node_tags_get", { nodeId });
+}
+
+export function nodeTagAdd(nodeId: string, tagId: string) {
+  return invokeTyped<boolean>("node_tag_add", { nodeId, tagId });
+}
+
+export function nodeTagRemove(nodeId: string, tagId: string) {
+  return invokeTyped<boolean>("node_tag_remove", { nodeId, tagId });
 }

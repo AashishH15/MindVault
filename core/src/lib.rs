@@ -6,7 +6,9 @@ use serde::Serialize;
 use tauri::Manager;
 
 mod ipc_types;
-use ipc_types::{Node, NodeCreateInput, NodeUpdateInput, Vault, VaultCreateInput};
+use ipc_types::{
+    Node, NodeCreateInput, NodeUpdateInput, Tag, TagCreateInput, Vault, VaultCreateInput,
+};
 
 struct DbState {
     db_path: PathBuf,
@@ -97,6 +99,15 @@ fn node_from_row(row: &Row<'_>) -> rusqlite::Result<Node> {
     })
 }
 
+fn tag_from_row(row: &Row<'_>) -> rusqlite::Result<Tag> {
+    Ok(Tag {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        color: row.get(2)?,
+        created_at: row.get(3)?,
+    })
+}
+
 fn fetch_vault_by_id(conn: &Connection, vault_id: &str) -> Result<Vault, String> {
     conn.query_row(
         "SELECT id, parent_vault_id, name, icon, description, privacy_tier, decay_rate, summary_node_id,
@@ -160,6 +171,17 @@ fn fetch_node_by_id(conn: &Connection, node_id: &str) -> Result<Option<Node>, St
             Err(format!("Failed fetching node {node_id}: {err}"))
         }
     })
+}
+
+fn fetch_tag_by_id(conn: &Connection, tag_id: &str) -> Result<Tag, String> {
+    conn.query_row(
+        "SELECT id, name, color, created_at
+         FROM tags
+         WHERE id = ?1;",
+        [tag_id],
+        tag_from_row,
+    )
+    .map_err(|err| format!("Failed fetching tag {tag_id}: {err}"))
 }
 
 fn fetch_nodes(conn: &Connection) -> Result<Vec<Node>, String> {
@@ -493,6 +515,114 @@ fn vault_delete(vault_id: String, state: tauri::State<'_, DbState>) -> IpcRespon
 }
 
 #[tauri::command]
+fn tag_list(state: tauri::State<'_, DbState>) -> IpcResponse<Vec<Tag>> {
+    into_ipc((|| {
+        let conn = open_connection(&state.db_path)?;
+        let mut statement = conn
+            .prepare(
+                "SELECT id, name, color, created_at
+                 FROM tags
+                 ORDER BY name ASC;",
+            )
+            .map_err(|err| format!("Failed preparing tag_list query: {err}"))?;
+
+        let rows = statement
+            .query_map([], tag_from_row)
+            .map_err(|err| format!("Failed querying tags: {err}"))?;
+
+        let mut tags = Vec::new();
+        for row in rows {
+            tags.push(row.map_err(|err| format!("Failed decoding tag row: {err}"))?);
+        }
+        Ok(tags)
+    })())
+}
+
+#[tauri::command]
+fn tag_create(input: TagCreateInput, state: tauri::State<'_, DbState>) -> IpcResponse<Tag> {
+    into_ipc((|| {
+        let mut conn = open_connection(&state.db_path)?;
+        let tx = conn
+            .transaction()
+            .map_err(|err| format!("Failed starting tag_create transaction: {err}"))?;
+
+        let id = generate_id(&tx, "tag")?;
+        tx.execute(
+            "INSERT INTO tags (id, name, color) VALUES (?1, ?2, ?3);",
+            params![id, input.name, input.color],
+        )
+        .map_err(|err| format!("Failed inserting tag: {err}"))?;
+
+        tx.commit()
+            .map_err(|err| format!("Failed committing tag_create: {err}"))?;
+
+        fetch_tag_by_id(&conn, &id)
+    })())
+}
+
+#[tauri::command]
+fn node_tags_get(node_id: String, state: tauri::State<'_, DbState>) -> IpcResponse<Vec<Tag>> {
+    into_ipc((|| {
+        let conn = open_connection(&state.db_path)?;
+        let mut statement = conn
+            .prepare(
+                "SELECT t.id, t.name, t.color, t.created_at
+                 FROM tags t
+                 JOIN node_tags nt ON t.id = nt.tag_id
+                 WHERE nt.node_id = ?1
+                 ORDER BY t.name ASC;",
+            )
+            .map_err(|err| format!("Failed preparing node_tags_get query: {err}"))?;
+
+        let rows = statement
+            .query_map([node_id], tag_from_row)
+            .map_err(|err| format!("Failed querying node tags: {err}"))?;
+
+        let mut tags = Vec::new();
+        for row in rows {
+            tags.push(row.map_err(|err| format!("Failed decoding node tag row: {err}"))?);
+        }
+        Ok(tags)
+    })())
+}
+
+#[tauri::command]
+fn node_tag_add(
+    node_id: String,
+    tag_id: String,
+    state: tauri::State<'_, DbState>,
+) -> IpcResponse<bool> {
+    into_ipc((|| {
+        let conn = open_connection(&state.db_path)?;
+        let affected = conn
+            .execute(
+                "INSERT OR IGNORE INTO node_tags (node_id, tag_id) VALUES (?1, ?2);",
+                params![node_id, tag_id],
+            )
+            .map_err(|err| format!("Failed adding node tag: {err}"))?;
+        Ok(affected > 0)
+    })())
+}
+
+#[tauri::command]
+fn node_tag_remove(
+    node_id: String,
+    tag_id: String,
+    state: tauri::State<'_, DbState>,
+) -> IpcResponse<bool> {
+    into_ipc((|| {
+        let conn = open_connection(&state.db_path)?;
+        let affected = conn
+            .execute(
+                "DELETE FROM node_tags WHERE node_id = ?1 AND tag_id = ?2;",
+                params![node_id, tag_id],
+            )
+            .map_err(|err| format!("Failed removing node tag: {err}"))?;
+        Ok(affected > 0)
+    })())
+}
+
+#[tauri::command]
 fn node_create(input: NodeCreateInput, state: tauri::State<'_, DbState>) -> IpcResponse<Node> {
     into_ipc((|| {
         let mut conn = open_connection(&state.db_path)?;
@@ -673,7 +803,12 @@ pub fn run() {
             node_get,
             node_list,
             node_update,
-            node_delete
+            node_delete,
+            tag_list,
+            tag_create,
+            node_tags_get,
+            node_tag_add,
+            node_tag_remove
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
