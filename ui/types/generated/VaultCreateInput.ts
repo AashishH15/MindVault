@@ -2,6 +2,7 @@
 
 export type VaultCreateInput = {
   name: string;
+  parentVaultId?: string;
   icon?: string;
   description?: string;
   privacyTier?: string;

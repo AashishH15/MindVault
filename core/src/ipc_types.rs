@@ -6,6 +6,8 @@ use ts_rs::TS;
 #[ts(export, export_to = "../../ui/types/generated/")]
 pub struct Vault {
     pub id: String,
+    #[ts(optional)]
+    pub parent_vault_id: Option<String>,
     pub name: String,
     pub icon: Option<String>,
     pub description: Option<String>,
@@ -25,6 +27,8 @@ pub struct Vault {
 #[ts(export, export_to = "../../ui/types/generated/")]
 pub struct VaultCreateInput {
     pub name: String,
+    #[ts(optional)]
+    pub parent_vault_id: Option<String>,
     #[ts(optional)]
     pub icon: Option<String>,
     #[ts(optional)]

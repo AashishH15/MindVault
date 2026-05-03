@@ -22,6 +22,10 @@ export async function getNodes(): Promise<Node[]> {
   return unwrapIpcResult(nodeList());
 }
 
+export async function getAllNodes(): Promise<Node[]> {
+  return getNodes();
+}
+
 export async function updateNode(input: NodeUpdateInput): Promise<Node> {
   return unwrapIpcResult(nodeUpdate(input));
 }

@@ -2,6 +2,7 @@
 
 export type Vault = {
   id: string;
+  parentVaultId?: string;
   name: string;
   icon: string | null;
   description: string | null;

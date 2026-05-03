@@ -204,6 +204,18 @@ body,
   font-size: 0.9rem;
 }
 
+.vault-search,
+.search-input {
+  width: 100%;
+  margin: 0 0 12px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 10px;
+  background: rgba(5, 8, 14, 0.55);
+  color: #eff3ff;
+  padding: 8px 10px;
+  font-size: 0.9rem;
+}
+
 .vault-list {
   list-style: none;
   margin: 0;
@@ -216,6 +228,22 @@ body,
   display: flex;
   gap: 6px;
   align-items: stretch;
+}
+
+.tree-toggle {
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.04);
+  color: #dce5ff;
+  border-radius: 10px;
+  width: 30px;
+  min-width: 30px;
+  padding: 8px 0;
+  cursor: pointer;
+}
+
+.tree-toggle.empty {
+  opacity: 0.35;
+  cursor: default;
 }
 
 .list-main {
@@ -238,6 +266,90 @@ body,
   justify-content: center;
   align-items: center;
   width: auto;
+}
+
+.list-subvault {
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.06);
+  color: #dff1ff;
+  border-radius: 10px;
+  padding: 8px 12px;
+  cursor: pointer;
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  width: auto;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+
+.list-item:hover .list-subvault,
+.list-item:focus-within .list-subvault {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.sub-vault-list {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0 0 0 20px;
+  display: grid;
+  gap: 8px;
+}
+
+.list-item.sub .list-main {
+  padding-left: 14px;
+}
+
+.search-node-list {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0 0 0 28px;
+  display: grid;
+  gap: 6px;
+}
+
+.search-node-item {
+  width: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  color: #d5ddf5;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.search-node-icon {
+  color: #8fb8ff;
+  font-size: 0.8rem;
+  line-height: 1.2rem;
+  flex-shrink: 0;
+}
+
+.search-node-text {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+}
+
+.search-node-text strong {
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: #dce7ff;
+}
+
+.search-node-text small {
+  color: #9eabcf;
+  font-size: 0.78rem;
+}
+
+.search-node-context {
+  color: #7f97c9;
 }
 
 .list-item small {
@@ -280,6 +392,12 @@ body,
 .editor-form {
   display: grid;
   gap: 10px;
+}
+
+.editor-breadcrumb {
+  margin: 0;
+  font-size: 0.8rem;
+  color: #8fa0c8;
 }
 
 .editor-form input,

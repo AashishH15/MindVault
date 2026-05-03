@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
-import type { Node } from "../ipc";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { Node, Vault } from "../ipc";
 import { createNode, getNodes } from "../services/nodes";
 import { AppError } from "../services/ipcResult";
+import { listVaults } from "../services/vaults";
 
 type NodeListProps = {
   selectedVaultId: string | null;
@@ -21,7 +22,10 @@ function NodeList({
   onBack,
 }: NodeListProps) {
   const [nodes, setNodes] = useState<Node[]>([]);
+  const [vaults, setVaults] = useState<Vault[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   async function loadNodes() {
     try {
@@ -44,23 +48,82 @@ function NodeList({
     return () => clearTimeout(timer);
   }, [refreshKey]);
 
-  const filteredNodes = useMemo(() => {
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      void (async () => {
+        try {
+          const data = await listVaults();
+          setVaults(data);
+        } catch (err) {
+          if (err instanceof AppError) {
+            setError(err.message);
+          } else {
+            setError("Failed to load vault context.");
+          }
+        }
+      })();
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [refreshKey]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      searchInputRef.current?.focus();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [selectedVaultId]);
+
+  const selectedVault = useMemo(() => {
     if (!selectedVaultId) {
+      return null;
+    }
+    return vaults.find((vault) => vault.id === selectedVaultId) ?? null;
+  }, [selectedVaultId, vaults]);
+
+  const scopedNodes = useMemo(() => {
+    if (!selectedVault) {
       return [];
     }
-    return nodes.filter((node) => node.vaultId === selectedVaultId);
-  }, [nodes, selectedVaultId]);
+    if (selectedVault.parentVaultId) {
+      return nodes.filter((node) => node.subVaultId === selectedVault.id);
+    }
+    return nodes.filter((node) => node.vaultId === selectedVault.id && !node.subVaultId);
+  }, [nodes, selectedVault]);
+
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+
+  const filteredNodes = useMemo(() => {
+    if (!normalizedQuery) {
+      return scopedNodes;
+    }
+    return scopedNodes.filter((node) => {
+      const title = node.title.toLowerCase();
+      const summary = node.summary.toLowerCase();
+      return title.includes(normalizedQuery) || summary.includes(normalizedQuery);
+    });
+  }, [normalizedQuery, scopedNodes]);
 
   async function onCreateNode() {
-    if (!selectedVaultId) {
+    if (!selectedVault) {
       return;
     }
     try {
+      const input = selectedVault.parentVaultId
+        ? {
+            vaultId: selectedVault.parentVaultId,
+            subVaultId: selectedVault.id,
+            title: "Untitled Node",
+            summary: "",
+            nodeType: "fact",
+          }
+        : {
+            vaultId: selectedVault.id,
+            title: "Untitled Node",
+            summary: "",
+            nodeType: "fact",
+          };
       const created = await createNode({
-        vaultId: selectedVaultId,
-        title: "Untitled Node",
-        summary: "",
-        nodeType: "fact",
+        ...input,
       });
       onNodeCreated(created.id);
       await loadNodes();
@@ -79,9 +142,17 @@ function NodeList({
       <button type="button" className="back-button" onClick={onBack}>
         ← Back to Vaults
       </button>
+      <input
+        ref={searchInputRef}
+        type="search"
+        placeholder="Search nodes..."
+        className="search-input"
+        value={searchQuery}
+        onChange={(e) => setSearchQuery(e.target.value)}
+      />
       <div className="pane-header">
         <h3>Nodes</h3>
-        <button type="button" onClick={onCreateNode} disabled={!selectedVaultId}>
+        <button type="button" onClick={onCreateNode} disabled={!selectedVault}>
           New Node
         </button>
       </div>
@@ -99,6 +170,9 @@ function NodeList({
           </button>
         ))}
       </div>
+      {filteredNodes.length === 0 && normalizedQuery && (
+        <p className="pane-empty">No nodes found matching '{searchQuery}'.</p>
+      )}
     </aside>
   );
 }

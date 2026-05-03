@@ -90,6 +90,7 @@ function App() {
               <VaultSidebar
                 selectedVaultId={selectedVaultId}
                 onSelectVault={onSelectVault}
+                onSelectNode={onSelectNode}
                 onVaultCreated={onVaultCreated}
                 onVaultDeleted={onVaultDeleted}
                 refreshKey={vaultRefreshKey}

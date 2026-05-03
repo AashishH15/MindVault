@@ -59,17 +59,18 @@ fn generate_id(conn: &Connection, prefix: &str) -> Result<String, String> {
 fn vault_from_row(row: &Row<'_>) -> rusqlite::Result<Vault> {
     Ok(Vault {
         id: row.get(0)?,
-        name: row.get(1)?,
-        icon: row.get(2)?,
-        description: row.get(3)?,
-        privacy_tier: row.get(4)?,
-        decay_rate: row.get(5)?,
-        summary_node_id: row.get(6)?,
-        sort_order: row.get(7)?,
-        created_at: row.get(8)?,
-        updated_at: row.get(9)?,
-        deleted_at: row.get(10)?,
-        meta: row.get(11)?,
+        parent_vault_id: row.get(1)?,
+        name: row.get(2)?,
+        icon: row.get(3)?,
+        description: row.get(4)?,
+        privacy_tier: row.get(5)?,
+        decay_rate: row.get(6)?,
+        summary_node_id: row.get(7)?,
+        sort_order: row.get(8)?,
+        created_at: row.get(9)?,
+        updated_at: row.get(10)?,
+        deleted_at: row.get(11)?,
+        meta: row.get(12)?,
     })
 }
 
@@ -98,10 +99,43 @@ fn node_from_row(row: &Row<'_>) -> rusqlite::Result<Node> {
 
 fn fetch_vault_by_id(conn: &Connection, vault_id: &str) -> Result<Vault, String> {
     conn.query_row(
-        "SELECT id, name, icon, description, privacy_tier, decay_rate, summary_node_id, sort_order,
-                created_at, updated_at, deleted_at, meta
-         FROM vaults
-         WHERE id = ?1;",
+        "SELECT id, parent_vault_id, name, icon, description, privacy_tier, decay_rate, summary_node_id,
+                sort_order, created_at, updated_at, deleted_at, meta
+         FROM (
+            SELECT id,
+                   NULL AS parent_vault_id,
+                   name,
+                   icon,
+                   description,
+                   privacy_tier,
+                   decay_rate,
+                   summary_node_id,
+                   sort_order,
+                   created_at,
+                   updated_at,
+                   deleted_at,
+                   meta
+            FROM vaults
+            WHERE deleted_at IS NULL
+            UNION ALL
+            SELECT id,
+                   vault_id AS parent_vault_id,
+                   name,
+                   icon,
+                   description,
+                   COALESCE(privacy_tier, 'open') AS privacy_tier,
+                   COALESCE(decay_rate, 'standard') AS decay_rate,
+                   summary_node_id,
+                   sort_order,
+                   created_at,
+                   updated_at,
+                   deleted_at,
+                   meta
+            FROM sub_vaults
+            WHERE deleted_at IS NULL
+         )
+         WHERE id = ?1
+         LIMIT 1;",
         [vault_id],
         vault_from_row,
     )
@@ -327,21 +361,41 @@ fn vault_create(input: VaultCreateInput, state: tauri::State<'_, DbState>) -> Ip
         let sort_order = input.sort_order.unwrap_or(0);
         let meta = input.meta.unwrap_or_else(|| "{}".to_string());
 
-        tx.execute(
-            "INSERT INTO vaults (id, name, icon, description, privacy_tier, decay_rate, sort_order, meta)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8);",
-            params![
-                id,
-                input.name,
-                input.icon,
-                input.description,
-                privacy_tier,
-                decay_rate,
-                sort_order,
-                meta
-            ],
-        )
-        .map_err(|err| format!("Failed inserting vault: {err}"))?;
+        if let Some(parent_vault_id) = input.parent_vault_id {
+            tx.execute(
+                "INSERT INTO sub_vaults (
+                    id, vault_id, name, icon, description, privacy_tier, decay_rate, sort_order, meta
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9);",
+                params![
+                    id,
+                    parent_vault_id,
+                    input.name,
+                    input.icon,
+                    input.description,
+                    privacy_tier,
+                    decay_rate,
+                    sort_order,
+                    meta
+                ],
+            )
+            .map_err(|err| format!("Failed inserting sub-vault: {err}"))?;
+        } else {
+            tx.execute(
+                "INSERT INTO vaults (id, name, icon, description, privacy_tier, decay_rate, sort_order, meta)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8);",
+                params![
+                    id,
+                    input.name,
+                    input.icon,
+                    input.description,
+                    privacy_tier,
+                    decay_rate,
+                    sort_order,
+                    meta
+                ],
+            )
+            .map_err(|err| format!("Failed inserting vault: {err}"))?;
+        }
 
         tx.commit()
             .map_err(|err| format!("Failed committing vault_create: {err}"))?;
@@ -356,10 +410,41 @@ fn vault_list(state: tauri::State<'_, DbState>) -> IpcResponse<Vec<Vault>> {
         let conn = open_connection(&state.db_path)?;
         let mut statement = conn
             .prepare(
-                "SELECT id, name, icon, description, privacy_tier, decay_rate, summary_node_id, sort_order,
-                        created_at, updated_at, deleted_at, meta
-                 FROM vaults
-                 WHERE deleted_at IS NULL
+                "SELECT id, parent_vault_id, name, icon, description, privacy_tier, decay_rate, summary_node_id,
+                        sort_order, created_at, updated_at, deleted_at, meta
+                 FROM (
+                    SELECT id,
+                           NULL AS parent_vault_id,
+                           name,
+                           icon,
+                           description,
+                           privacy_tier,
+                           decay_rate,
+                           summary_node_id,
+                           sort_order,
+                           created_at,
+                           updated_at,
+                           deleted_at,
+                           meta
+                    FROM vaults
+                    WHERE deleted_at IS NULL
+                    UNION ALL
+                    SELECT id,
+                           vault_id AS parent_vault_id,
+                           name,
+                           icon,
+                           description,
+                           COALESCE(privacy_tier, 'open') AS privacy_tier,
+                           COALESCE(decay_rate, 'standard') AS decay_rate,
+                           summary_node_id,
+                           sort_order,
+                           created_at,
+                           updated_at,
+                           deleted_at,
+                           meta
+                    FROM sub_vaults
+                    WHERE deleted_at IS NULL
+                 )
                  ORDER BY sort_order ASC, created_at ASC;",
             )
             .map_err(|err| format!("Failed preparing vault_list query: {err}"))?;
@@ -379,17 +464,31 @@ fn vault_list(state: tauri::State<'_, DbState>) -> IpcResponse<Vec<Vault>> {
 #[tauri::command]
 fn vault_delete(vault_id: String, state: tauri::State<'_, DbState>) -> IpcResponse<bool> {
     into_ipc((|| {
-        let conn = open_connection(&state.db_path)?;
-        let affected = conn
+        let mut conn = open_connection(&state.db_path)?;
+        let tx = conn
+            .transaction()
+            .map_err(|err| format!("Failed starting vault_delete transaction: {err}"))?;
+        let affected_vaults = tx
             .execute(
                 "UPDATE vaults
                  SET deleted_at = datetime('now'),
                      updated_at = datetime('now')
                  WHERE id = ?1 AND deleted_at IS NULL;",
-                [vault_id],
+                [&vault_id],
             )
             .map_err(|err| format!("Failed deleting vault: {err}"))?;
-        Ok(affected > 0)
+        let affected_sub_vaults = tx
+            .execute(
+                "UPDATE sub_vaults
+                 SET deleted_at = datetime('now'),
+                     updated_at = datetime('now')
+                 WHERE id = ?1 AND deleted_at IS NULL;",
+                [&vault_id],
+            )
+            .map_err(|err| format!("Failed deleting sub-vault: {err}"))?;
+        tx.commit()
+            .map_err(|err| format!("Failed committing vault_delete: {err}"))?;
+        Ok(affected_vaults + affected_sub_vaults > 0)
     })())
 }
 

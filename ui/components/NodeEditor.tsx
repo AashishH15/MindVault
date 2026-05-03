@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { deleteNode, getNode, updateNode } from "../services/nodes";
 import type { Node } from "../ipc";
 import { AppError } from "../services/ipcResult";
+import { listVaults, resolveVaultPath } from "../services/vaults";
 
 type NodeEditorProps = {
   selectedNodeId: string | null;
@@ -16,6 +17,7 @@ function NodeEditor({ selectedNodeId, refreshKey, onNodeDeleted, onSaveSuccess }
   const [editSummary, setEditSummary] = useState("");
   const [editDetail, setEditDetail] = useState("");
   const [editPrivacy, setEditPrivacy] = useState("open");
+  const [breadcrumbPath, setBreadcrumbPath] = useState("");
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
   const [status, setStatus] = useState<string>("");
   const saveRunIdRef = useRef(0);
@@ -29,6 +31,7 @@ function NodeEditor({ selectedNodeId, refreshKey, onNodeDeleted, onSaveSuccess }
         setEditSummary("");
         setEditDetail("");
         setEditPrivacy("open");
+        setBreadcrumbPath("");
         setSaveStatus("idle");
       }, 0);
       return () => clearTimeout(clearTimer);
@@ -60,6 +63,33 @@ function NodeEditor({ selectedNodeId, refreshKey, onNodeDeleted, onSaveSuccess }
     }, 0);
     return () => clearTimeout(timer);
   }, [refreshKey, selectedNodeId]);
+
+  useEffect(() => {
+    if (!node) {
+      const timer = window.setTimeout(() => {
+        setBreadcrumbPath("");
+      }, 0);
+      return () => window.clearTimeout(timer);
+    }
+
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const vaults = await listVaults();
+          setBreadcrumbPath(resolveVaultPath(node, vaults));
+        } catch (err) {
+          if (err instanceof AppError) {
+            setStatus(err.message);
+          } else {
+            setStatus("Failed to resolve node path.");
+          }
+          setBreadcrumbPath("");
+        }
+      })();
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, [node]);
 
   useEffect(() => {
     const syncTimer = window.setTimeout(() => {
@@ -210,6 +240,7 @@ function NodeEditor({ selectedNodeId, refreshKey, onNodeDeleted, onSaveSuccess }
         <p className="pane-empty">Select a node to edit.</p>
       ) : (
         <div className="editor-form">
+          {breadcrumbPath && <p className="editor-breadcrumb">{breadcrumbPath}</p>}
           <div className="editor-meta">
             <label className="editor-privacy">
               <span>Privacy</span>
