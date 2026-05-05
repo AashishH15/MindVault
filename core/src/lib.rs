@@ -5,24 +5,26 @@ use rusqlite::{params, Connection, Row};
 use serde::Serialize;
 use tauri::Manager;
 
+mod auth;
 mod ipc_types;
+mod privacy;
 use ipc_types::{
     Backlink, Door, DoorCreateInput, Node, NodeCreateInput, NodeUpdateInput, Tag, TagCreateInput,
-    Vault, VaultCreateInput,
+    Vault, VaultCreateInput, VaultUpdateInput,
 };
 
-struct DbState {
-    db_path: PathBuf,
+pub(crate) struct DbState {
+    pub(crate) db_path: PathBuf,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(untagged)]
-enum IpcResponse<T> {
+pub(crate) enum IpcResponse<T> {
     Ok { ok: T },
     Err { err: String },
 }
 
-fn into_ipc<T>(result: Result<T, String>) -> IpcResponse<T> {
+pub(crate) fn into_ipc<T>(result: Result<T, String>) -> IpcResponse<T> {
     match result {
         Ok(value) => IpcResponse::Ok { ok: value },
         Err(err) => IpcResponse::Err { err },
@@ -42,7 +44,7 @@ fn sqlite_db_path(app: &tauri::App) -> Result<PathBuf, Box<dyn std::error::Error
     Ok(app_data_dir.join("mindvault.db"))
 }
 
-fn open_connection(db_path: &Path) -> Result<Connection, String> {
+pub(crate) fn open_connection(db_path: &Path) -> Result<Connection, String> {
     let conn = Connection::open(db_path)
         .map_err(|err| format!("Failed opening database {}: {err}", db_path.display()))?;
     conn.pragma_update(None, "foreign_keys", "ON")
@@ -390,6 +392,22 @@ fn run_seed_data(conn: &mut Connection) -> Result<(), String> {
     )
     .map_err(|err| format!("Failed inserting Root Graph vault: {err}"))?;
 
+    tx.execute(
+        "INSERT OR IGNORE INTO vaults (id, name, icon, description, privacy_tier, decay_rate, sort_order, meta)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8);",
+        params![
+            "vault_credentials",
+            "Credentials",
+            "key",
+            "Local-only secrets and API keys.",
+            "locked",
+            "pinned",
+            1_i64,
+            "{}"
+        ],
+    )
+    .map_err(|err| format!("Failed inserting Credentials vault: {err}"))?;
+
     tx.commit()
         .map_err(|err| format!("Failed committing seed transaction: {err}"))?;
 
@@ -549,6 +567,52 @@ fn vault_delete(vault_id: String, state: tauri::State<'_, DbState>) -> IpcRespon
         tx.commit()
             .map_err(|err| format!("Failed committing vault_delete: {err}"))?;
         Ok(affected_vaults + affected_sub_vaults > 0)
+    })())
+}
+
+#[tauri::command]
+fn vault_update(input: VaultUpdateInput, state: tauri::State<'_, DbState>) -> IpcResponse<Vault> {
+    into_ipc((|| {
+        let mut conn = open_connection(&state.db_path)?;
+        let tx = conn
+            .transaction()
+            .map_err(|err| format!("Failed starting vault_update transaction: {err}"))?;
+
+        let vault_id = input.id;
+        let current = fetch_vault_by_id(&tx, &vault_id)?;
+        let next_name = input.name.unwrap_or(current.name);
+        let next_privacy_tier = input.privacy_tier.unwrap_or(current.privacy_tier);
+        let next_decay_rate = input.decay_rate.unwrap_or(current.decay_rate);
+
+        let affected_vaults = tx
+            .execute(
+                "UPDATE vaults
+                 SET name = ?2,
+                     privacy_tier = ?3,
+                     decay_rate = ?4,
+                     updated_at = datetime('now')
+                 WHERE id = ?1 AND deleted_at IS NULL;",
+                params![&vault_id, &next_name, &next_privacy_tier, &next_decay_rate],
+            )
+            .map_err(|err| format!("Failed updating vault: {err}"))?;
+
+        if affected_vaults == 0 {
+            tx.execute(
+                "UPDATE sub_vaults
+                 SET name = ?2,
+                     privacy_tier = ?3,
+                     decay_rate = ?4,
+                     updated_at = datetime('now')
+                 WHERE id = ?1 AND deleted_at IS NULL;",
+                params![&vault_id, &next_name, &next_privacy_tier, &next_decay_rate],
+            )
+            .map_err(|err| format!("Failed updating sub-vault: {err}"))?;
+        }
+
+        tx.commit()
+            .map_err(|err| format!("Failed committing vault_update: {err}"))?;
+
+        fetch_vault_by_id(&conn, &vault_id)
     })())
 }
 
@@ -956,6 +1020,7 @@ pub fn run() {
             vault_create,
             vault_list,
             vault_delete,
+            vault_update,
             node_create,
             node_get,
             node_list,
@@ -970,7 +1035,10 @@ pub fn run() {
             door_list_outgoing,
             door_list_incoming,
             door_delete,
-            door_repoint
+            door_repoint,
+            auth::auth_is_setup,
+            auth::auth_set_password,
+            auth::auth_verify_password
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

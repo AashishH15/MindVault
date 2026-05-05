@@ -8,3 +8,4 @@ export type { Tag } from "./Tag";
 export type { TagCreateInput } from "./TagCreateInput";
 export type { Vault } from "./Vault";
 export type { VaultCreateInput } from "./VaultCreateInput";
+export type { VaultUpdateInput } from "./VaultUpdateInput";

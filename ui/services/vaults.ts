@@ -2,9 +2,11 @@ import {
   vaultCreate,
   vaultDelete,
   vaultList,
+  vaultUpdate,
   type Node,
   type Vault,
   type VaultCreateInput,
+  type VaultUpdateInput,
 } from "../ipc";
 import { unwrapIpcResult } from "./ipcResult";
 
@@ -18,6 +20,10 @@ export async function listVaults(): Promise<Vault[]> {
 
 export async function deleteVault(vaultId: string): Promise<boolean> {
   return unwrapIpcResult(vaultDelete(vaultId));
+}
+
+export async function updateVault(input: VaultUpdateInput): Promise<Vault> {
+  return unwrapIpcResult(vaultUpdate(input));
 }
 
 function getParentVaultId(vault: Vault): string | null {

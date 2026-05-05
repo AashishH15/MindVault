@@ -11,7 +11,8 @@ import {
   listOutgoingDoors,
   repointDoor,
 } from "../services/doors";
-import { getEffectivePrivacy } from "../utils/privacy";
+import { isAuthSetup, setMasterPassword, verifyMasterPassword } from "../services/auth";
+import { getEffectivePrivacy, getPrivacyRank } from "../utils/privacy";
 import { PrivacyBadge } from "./PrivacyBadge";
 
 type NodeEditorProps = {
@@ -19,9 +20,18 @@ type NodeEditorProps = {
   refreshKey: number;
   onNodeDeleted: (nodeId: string) => void;
   onSaveSuccess: () => void;
+  isRedactedUnlocked: boolean;
+  setIsRedactedUnlocked: (value: boolean) => void;
 };
 
-function NodeEditor({ selectedNodeId, refreshKey, onNodeDeleted, onSaveSuccess }: NodeEditorProps) {
+function NodeEditor({
+  selectedNodeId,
+  refreshKey,
+  onNodeDeleted,
+  onSaveSuccess,
+  isRedactedUnlocked,
+  setIsRedactedUnlocked,
+}: NodeEditorProps) {
   const [node, setNode] = useState<Node | null>(null);
   const [editTitle, setEditTitle] = useState("");
   const [editSummary, setEditSummary] = useState("");
@@ -387,17 +397,95 @@ function NodeEditor({ selectedNodeId, refreshKey, onNodeDeleted, onSaveSuccess }
     });
   }, [allNodes, connectedTargetIds, doorSearchQuery, node]);
 
-  const effectivePrivacyTier = useMemo(() => {
+  const { parentTier, effectivePrivacyTier } = useMemo(() => {
     if (!node) {
-      return "open";
+      return { parentTier: "open", effectivePrivacyTier: "open" };
     }
     const subVault = node.subVaultId
       ? vaults.find((vault) => vault.id === node.subVaultId)
       : undefined;
     const parentVaultId = subVault?.parentVaultId ?? node.vaultId;
     const parentVault = vaults.find((vault) => vault.id === parentVaultId);
-    return getEffectivePrivacy(editPrivacy, subVault?.privacyTier, parentVault?.privacyTier);
+    const forcedParentTier = getEffectivePrivacy(
+      undefined,
+      subVault?.privacyTier,
+      parentVault?.privacyTier
+    );
+    return {
+      parentTier: forcedParentTier,
+      effectivePrivacyTier: getEffectivePrivacy(
+        editPrivacy,
+        subVault?.privacyTier,
+        parentVault?.privacyTier
+      ),
+    };
   }, [editPrivacy, node, vaults]);
+
+  const isLocked = effectivePrivacyTier === "redacted" && !isRedactedUnlocked;
+  const [authIsSetupState, setAuthIsSetupState] = useState<boolean | null>(null);
+  const [lockPasswordInput, setLockPasswordInput] = useState("");
+  const [lockError, setLockError] = useState("");
+
+  useEffect(() => {
+    if (!isLocked) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        const result = await isAuthSetup();
+        if (result.error) {
+          setAuthIsSetupState(false);
+          setLockError(result.error.message);
+          return;
+        }
+        setAuthIsSetupState(result.data ?? false);
+        setLockError("");
+      })();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [isLocked]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setLockPasswordInput("");
+      setLockError("");
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [selectedNodeId, isLocked]);
+
+  async function onLockSubmit() {
+    const password = lockPasswordInput;
+    if (!password) {
+      return;
+    }
+    setLockError("");
+    if (authIsSetupState) {
+      const result = await verifyMasterPassword(password);
+      if (result.error) {
+        setLockError(result.error.message);
+        return;
+      }
+      if (!result.data) {
+        setLockError("Incorrect password");
+        return;
+      }
+      setIsRedactedUnlocked(true);
+      setLockPasswordInput("");
+      return;
+    }
+    const result = await setMasterPassword(password);
+    if (result.error) {
+      setLockError(result.error.message);
+      return;
+    }
+    if (!result.data) {
+      setLockError("Failed to set master password.");
+      return;
+    }
+    setAuthIsSetupState(true);
+    setIsRedactedUnlocked(true);
+    setLockPasswordInput("");
+  }
 
   async function onAddExistingTag(tag: Tag) {
     if (!node) {
@@ -547,12 +635,37 @@ function NodeEditor({ selectedNodeId, refreshKey, onNodeDeleted, onSaveSuccess }
           <div className="editor-meta">
             <label className="editor-privacy">
               <span>Privacy</span>
-              <select value={editPrivacy} onChange={(e) => setEditPrivacy(e.target.value)}>
-                <option value="open">Open</option>
-                <option value="local_only">Local-Only</option>
-                <option value="locked">Locked</option>
-                <option value="redacted">Redacted</option>
-              </select>
+              {!isLocked && (
+                <select
+                  value={effectivePrivacyTier}
+                  onChange={(e) => setEditPrivacy(e.target.value)}
+                >
+                  <option
+                    value="open"
+                    disabled={getPrivacyRank("open") < getPrivacyRank(parentTier)}
+                  >
+                    Open
+                  </option>
+                  <option
+                    value="local_only"
+                    disabled={getPrivacyRank("local_only") < getPrivacyRank(parentTier)}
+                  >
+                    Local-Only
+                  </option>
+                  <option
+                    value="locked"
+                    disabled={getPrivacyRank("locked") < getPrivacyRank(parentTier)}
+                  >
+                    Locked
+                  </option>
+                  <option
+                    value="redacted"
+                    disabled={getPrivacyRank("redacted") < getPrivacyRank(parentTier)}
+                  >
+                    Redacted
+                  </option>
+                </select>
+              )}
               <span className="effective-privacy">
                 (Effective: <PrivacyBadge tier={effectivePrivacyTier} />)
               </span>
@@ -561,173 +674,213 @@ function NodeEditor({ selectedNodeId, refreshKey, onNodeDeleted, onSaveSuccess }
               <span className="decay-badge">Decay: {decayScore.toFixed(2)}</span>
             )}
           </div>
-          <input
-            className="editor-title"
-            value={editTitle}
-            onChange={(e) => setEditTitle(e.target.value)}
-            placeholder="Title"
-          />
-          <div className="tag-wrapper">
-            <div className="tag-list">
-              {nodeTags.map((tag) => (
-                <span key={tag.id} className="tag-pill">
-                  {tag.name}
-                  <button
-                    type="button"
-                    onClick={() => onRemoveTag(tag.id)}
-                    aria-label={`Remove ${tag.name}`}
-                  >
-                    ×
+          {isLocked ? (
+            <div className="redacted-lock-screen">
+              <span className="redacted-lock-icon" aria-hidden="true">
+                🔒
+              </span>
+              <h4 className="redacted-lock-title">Redacted</h4>
+              <p className="redacted-lock-subtitle">
+                {authIsSetupState === false
+                  ? "Set a master password to lock and unlock redacted nodes."
+                  : "Enter your master password to view this node."}
+              </p>
+              {authIsSetupState !== null && (
+                <form
+                  className="redacted-lock-form"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void onLockSubmit();
+                  }}
+                >
+                  <input
+                    className="redacted-lock-input"
+                    type="password"
+                    value={lockPasswordInput}
+                    onChange={(event) => setLockPasswordInput(event.target.value)}
+                    placeholder={authIsSetupState ? "Master password" : "Choose a master password"}
+                    autoFocus
+                  />
+                  <button type="submit" className="redacted-lock-button">
+                    {authIsSetupState ? "Unlock" : "Set Master Password"}
                   </button>
-                </span>
-              ))}
+                </form>
+              )}
+              {lockError && <p className="redacted-lock-error">{lockError}</p>}
             </div>
-            <input
-              className="tag-input"
-              placeholder="Add tag..."
-              value={tagInput}
-              onChange={(e) => {
-                setTagInput(e.target.value);
-                setIsDropdownOpen(true);
-              }}
-              onFocus={() => setIsDropdownOpen(true)}
-              onBlur={() => {
-                window.setTimeout(() => setIsDropdownOpen(false), 120);
-              }}
-            />
-            {isDropdownOpen && (
-              <div className="tag-dropdown">
-                {filteredTagOptions.map((tag) => (
-                  <button
-                    key={tag.id}
-                    type="button"
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => void onAddExistingTag(tag)}
-                  >
-                    {tag.name}
-                  </button>
-                ))}
-                {normalizedTagInput && !hasExactTagMatch && (
-                  <button
-                    type="button"
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => void onCreateAndAddTag()}
-                  >
-                    Create new tag: "{tagInput.trim()}"
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-          <textarea
-            value={editSummary}
-            onChange={(e) => setEditSummary(e.target.value)}
-            placeholder="Summary"
-          />
-          <textarea
-            className="editor-detail"
-            value={editDetail}
-            onChange={(e) => setEditDetail(e.target.value)}
-            placeholder="Detail"
-          />
-          <div className="connections-section">
-            <div className="connections-header">
-              <h4>Connections</h4>
-              <button type="button" onClick={onToggleDoorPicker}>
-                + Add Connection
-              </button>
-            </div>
-            <div className="door-list">
-              {outgoingDoors.map((door) => {
-                const targetNode = door.targetNodeId ? allNodesMap[door.targetNodeId] : undefined;
-                const targetTitle = targetNode?.title ?? "Missing target node";
-                return (
-                  <div
-                    key={door.id}
-                    className={`door-item ${door.status === "orphaned" ? "orphaned" : ""}`}
-                  >
-                    <div className="door-main">
-                      <strong>{targetTitle}</strong>
-                      {door.status === "orphaned" && (
-                        <span className="door-orphan-badge">[Orphaned]</span>
-                      )}
-                      {door.label && <span className="door-label">{door.label}</span>}
-                    </div>
-                    <div className="door-actions">
-                      {door.status === "orphaned" && (
-                        <button
-                          type="button"
-                          className="door-repoint"
-                          onClick={() => onStartRepoint(door.id)}
-                        >
-                          Re-point
-                        </button>
-                      )}
+          ) : (
+            <>
+              <input
+                className="editor-title"
+                value={editTitle}
+                onChange={(e) => setEditTitle(e.target.value)}
+                placeholder="Title"
+              />
+              <div className="tag-wrapper">
+                <div className="tag-list">
+                  {nodeTags.map((tag) => (
+                    <span key={tag.id} className="tag-pill">
+                      {tag.name}
                       <button
                         type="button"
-                        onClick={() => void onDoorDelete(door.id)}
-                        aria-label="Delete door"
+                        onClick={() => onRemoveTag(tag.id)}
+                        aria-label={`Remove ${tag.name}`}
                       >
                         ×
                       </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-            <div className="door-list incoming">
-              {incomingDoors
-                .filter((backlink) => Boolean(allNodesMap[backlink.sourceNodeId]))
-                .map((backlink) => {
-                  const sourceNode = allNodesMap[backlink.sourceNodeId];
-                  const sourceTitle = sourceNode.title;
-                  return (
-                    <div key={backlink.id} className="door-item">
-                      <div className="door-main">
-                        <strong>{sourceTitle}</strong>
-                        <span className="door-label">Incoming</span>
-                      </div>
-                    </div>
-                  );
-                })}
-            </div>
-            {isDoorPickerOpen && (
-              <div className="door-picker">
-                {repointDoorId && <p className="door-picker-mode">Re-point orphaned door</p>}
-                <input
-                  type="search"
-                  value={doorSearchQuery}
-                  onChange={(e) => setDoorSearchQuery(e.target.value)}
-                  placeholder="Search nodes to connect..."
-                />
-                <div className="door-search-results">
-                  {filteredDoorTargets.map((target) => (
-                    <button
-                      key={target.id}
-                      type="button"
-                      onClick={() => setDoorTargetId(target.id)}
-                    >
-                      <strong>{target.title}</strong>
-                      <small>{target.summary.slice(0, 72)}</small>
-                    </button>
+                    </span>
                   ))}
                 </div>
-                {doorTargetId && (
-                  <div className="door-create-row">
-                    <input
-                      type="text"
-                      placeholder="Optional label..."
-                      value={doorLabelInput}
-                      onChange={(e) => setDoorLabelInput(e.target.value)}
-                    />
-                    <button type="button" onClick={() => void onConfirmConnection()}>
-                      Confirm Connect
-                    </button>
+                <input
+                  className="tag-input"
+                  placeholder="Add tag..."
+                  value={tagInput}
+                  onChange={(e) => {
+                    setTagInput(e.target.value);
+                    setIsDropdownOpen(true);
+                  }}
+                  onFocus={() => setIsDropdownOpen(true)}
+                  onBlur={() => {
+                    window.setTimeout(() => setIsDropdownOpen(false), 120);
+                  }}
+                />
+                {isDropdownOpen && (
+                  <div className="tag-dropdown">
+                    {filteredTagOptions.map((tag) => (
+                      <button
+                        key={tag.id}
+                        type="button"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => void onAddExistingTag(tag)}
+                      >
+                        {tag.name}
+                      </button>
+                    ))}
+                    {normalizedTagInput && !hasExactTagMatch && (
+                      <button
+                        type="button"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => void onCreateAndAddTag()}
+                      >
+                        Create new tag: "{tagInput.trim()}"
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
-            )}
-          </div>
+              <textarea
+                value={editSummary}
+                onChange={(e) => setEditSummary(e.target.value)}
+                placeholder="Summary"
+              />
+              <textarea
+                className="editor-detail"
+                value={editDetail}
+                onChange={(e) => setEditDetail(e.target.value)}
+                placeholder="Detail"
+              />
+              <div className="connections-section">
+                <div className="connections-header">
+                  <h4>Connections</h4>
+                  <button type="button" onClick={onToggleDoorPicker}>
+                    + Add Connection
+                  </button>
+                </div>
+                <div className="door-list">
+                  {outgoingDoors.map((door) => {
+                    const targetNode = door.targetNodeId
+                      ? allNodesMap[door.targetNodeId]
+                      : undefined;
+                    const targetTitle = targetNode?.title ?? "Missing target node";
+                    return (
+                      <div
+                        key={door.id}
+                        className={`door-item ${door.status === "orphaned" ? "orphaned" : ""}`}
+                      >
+                        <div className="door-main">
+                          <strong>{targetTitle}</strong>
+                          {door.status === "orphaned" && (
+                            <span className="door-orphan-badge">[Orphaned]</span>
+                          )}
+                          {door.label && <span className="door-label">{door.label}</span>}
+                        </div>
+                        <div className="door-actions">
+                          {door.status === "orphaned" && (
+                            <button
+                              type="button"
+                              className="door-repoint"
+                              onClick={() => onStartRepoint(door.id)}
+                            >
+                              Re-point
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => void onDoorDelete(door.id)}
+                            aria-label="Delete door"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="door-list incoming">
+                  {incomingDoors
+                    .filter((backlink) => Boolean(allNodesMap[backlink.sourceNodeId]))
+                    .map((backlink) => {
+                      const sourceNode = allNodesMap[backlink.sourceNodeId];
+                      const sourceTitle = sourceNode.title;
+                      return (
+                        <div key={backlink.id} className="door-item">
+                          <div className="door-main">
+                            <strong>{sourceTitle}</strong>
+                            <span className="door-label">Incoming</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+                {isDoorPickerOpen && (
+                  <div className="door-picker">
+                    {repointDoorId && <p className="door-picker-mode">Re-point orphaned door</p>}
+                    <input
+                      type="search"
+                      value={doorSearchQuery}
+                      onChange={(e) => setDoorSearchQuery(e.target.value)}
+                      placeholder="Search nodes to connect..."
+                    />
+                    <div className="door-search-results">
+                      {filteredDoorTargets.map((target) => (
+                        <button
+                          key={target.id}
+                          type="button"
+                          onClick={() => setDoorTargetId(target.id)}
+                        >
+                          <strong>{target.title}</strong>
+                          <small>{target.summary.slice(0, 72)}</small>
+                        </button>
+                      ))}
+                    </div>
+                    {doorTargetId && (
+                      <div className="door-create-row">
+                        <input
+                          type="text"
+                          placeholder="Optional label..."
+                          value={doorLabelInput}
+                          onChange={(e) => setDoorLabelInput(e.target.value)}
+                        />
+                        <button type="button" onClick={() => void onConfirmConnection()}>
+                          Confirm Connect
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
         </div>
       )}
       {status && <p className="pane-status">{status}</p>}

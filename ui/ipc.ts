@@ -10,6 +10,7 @@ import type {
   TagCreateInput,
   Vault,
   VaultCreateInput,
+  VaultUpdateInput,
 } from "./types/generated";
 
 export type IpcResult<T> = { ok: T } | { err: string };
@@ -24,6 +25,7 @@ export type {
   TagCreateInput,
   Vault,
   VaultCreateInput,
+  VaultUpdateInput,
 };
 
 async function invokeTyped<T>(
@@ -55,6 +57,10 @@ export function vaultList() {
 
 export function vaultDelete(vaultId: string) {
   return invokeTyped<boolean>("vault_delete", { vaultId });
+}
+
+export function vaultUpdate(input: VaultUpdateInput) {
+  return invokeTyped<Vault>("vault_update", { input });
 }
 
 export function nodeCreate(input: NodeCreateInput) {
@@ -115,4 +121,16 @@ export function doorDelete(doorId: string) {
 
 export function doorRepoint(doorId: string, targetNodeId: string) {
   return invokeTyped<boolean>("door_repoint", { doorId, targetNodeId });
+}
+
+export function authIsSetup() {
+  return invokeTyped<boolean>("auth_is_setup");
+}
+
+export function authSetPassword(password: string) {
+  return invokeTyped<boolean>("auth_set_password", { password });
+}
+
+export function authVerifyPassword(password: string) {
+  return invokeTyped<boolean>("auth_verify_password", { password });
 }

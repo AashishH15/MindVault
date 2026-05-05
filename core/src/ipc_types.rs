@@ -44,6 +44,19 @@ pub struct VaultCreateInput {
     pub meta: Option<String>,
 }
 
+#[derive(Debug, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../ui/types/generated/")]
+pub struct VaultUpdateInput {
+    pub id: String,
+    #[ts(optional)]
+    pub name: Option<String>,
+    #[ts(optional)]
+    pub privacy_tier: Option<String>,
+    #[ts(optional)]
+    pub decay_rate: Option<String>,
+}
+
 #[derive(Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export, export_to = "../../ui/types/generated/")]
@@ -192,6 +205,7 @@ mod tests {
     fn export_typescript_bindings() {
         Vault::export().expect("failed to export Vault");
         VaultCreateInput::export().expect("failed to export VaultCreateInput");
+        VaultUpdateInput::export().expect("failed to export VaultUpdateInput");
         Node::export().expect("failed to export Node");
         NodeCreateInput::export().expect("failed to export NodeCreateInput");
         NodeUpdateInput::export().expect("failed to export NodeUpdateInput");

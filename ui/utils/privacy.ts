@@ -12,6 +12,8 @@ function normalizeTier(tier?: string | null): string {
   return tier in PRIVACY_RANKS ? tier : "open";
 }
 
+export const getPrivacyRank = (tier?: string | null): number => PRIVACY_RANKS[normalizeTier(tier)];
+
 export function getEffectivePrivacy(
   nodeTier?: string | null,
   subVaultTier?: string | null,
@@ -20,6 +22,6 @@ export function getEffectivePrivacy(
   const tiers = [normalizeTier(nodeTier), normalizeTier(subVaultTier), normalizeTier(vaultTier)];
 
   return tiers.reduce((strictest, current) =>
-    PRIVACY_RANKS[current] > PRIVACY_RANKS[strictest] ? current : strictest
+    getPrivacyRank(current) > getPrivacyRank(strictest) ? current : strictest
   );
 }

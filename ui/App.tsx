@@ -13,6 +13,7 @@ function App() {
   const [rightPaneVisible, setRightPaneVisible] = useState<boolean>(false);
   const [vaultRefreshKey, setVaultRefreshKey] = useState<number>(0);
   const [nodeRefreshKey, setNodeRefreshKey] = useState<number>(0);
+  const [isRedactedUnlocked, setIsRedactedUnlocked] = useState<boolean>(false);
   const leftPaneExpanded = leftPaneVisible || selectedNodeId !== null;
 
   function closeAllPanes() {
@@ -94,6 +95,8 @@ function App() {
                 onVaultCreated={onVaultCreated}
                 onVaultDeleted={onVaultDeleted}
                 refreshKey={vaultRefreshKey}
+                isRedactedUnlocked={isRedactedUnlocked}
+                setIsRedactedUnlocked={setIsRedactedUnlocked}
               />
             ) : (
               <NodeList
@@ -122,6 +125,8 @@ function App() {
               onNodeDeleted={onNodeDeleted}
               onSaveSuccess={() => setNodeRefreshKey((value) => value + 1)}
               refreshKey={nodeRefreshKey}
+              isRedactedUnlocked={isRedactedUnlocked}
+              setIsRedactedUnlocked={setIsRedactedUnlocked}
             />
           </div>
           <div className="edge-trigger right" />
