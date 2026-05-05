@@ -3,6 +3,8 @@ import type { Node, Vault } from "../ipc";
 import { createNode, getNodes } from "../services/nodes";
 import { AppError } from "../services/ipcResult";
 import { listVaults } from "../services/vaults";
+import { getEffectivePrivacy } from "../utils/privacy";
+import { PrivacyBadge } from "./PrivacyBadge";
 
 type NodeListProps = {
   selectedVaultId: string | null;
@@ -80,6 +82,14 @@ function NodeList({
     return vaults.find((vault) => vault.id === selectedVaultId) ?? null;
   }, [selectedVaultId, vaults]);
 
+  const vaultById = useMemo(() => {
+    const map: Record<string, Vault> = {};
+    for (const vault of vaults) {
+      map[vault.id] = vault;
+    }
+    return map;
+  }, [vaults]);
+
   const scopedNodes = useMemo(() => {
     if (!selectedVault) {
       return [];
@@ -102,6 +112,21 @@ function NodeList({
       return title.includes(normalizedQuery) || summary.includes(normalizedQuery);
     });
   }, [normalizedQuery, scopedNodes]);
+
+  const effectivePrivacyByNodeId = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const node of filteredNodes) {
+      const subVault = node.subVaultId ? vaultById[node.subVaultId] : undefined;
+      const parentVaultId = subVault?.parentVaultId ?? node.vaultId;
+      const vault = vaultById[parentVaultId];
+      map[node.id] = getEffectivePrivacy(
+        node.privacyTier,
+        subVault?.privacyTier,
+        vault?.privacyTier
+      );
+    }
+    return map;
+  }, [filteredNodes, vaultById]);
 
   async function onCreateNode() {
     if (!selectedVault) {
@@ -165,7 +190,10 @@ function NodeList({
             className={`node-card ${selectedNodeId === node.id ? "active" : ""}`}
             onClick={() => onSelectNode(node.id)}
           >
-            <strong>{node.title}</strong>
+            <span className="node-card-title-row">
+              <strong>{node.title}</strong>
+              <PrivacyBadge tier={effectivePrivacyByNodeId[node.id] ?? "open"} />
+            </span>
             <p>{node.summary.slice(0, 120)}</p>
           </button>
         ))}

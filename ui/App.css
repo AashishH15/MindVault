@@ -255,6 +255,12 @@ body,
   cursor: pointer;
 }
 
+.list-title-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .list-delete {
   border: 1px solid rgba(255, 255, 255, 0.15);
   background: rgba(255, 255, 255, 0.06);
@@ -381,6 +387,17 @@ body,
 .node-card strong {
   display: block;
   margin-bottom: 6px;
+}
+
+.node-card-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.node-card-title-row strong {
+  margin-bottom: 0;
 }
 
 .node-card p {
@@ -700,6 +717,7 @@ body,
   gap: 8px;
   color: #c3cae2;
   font-size: 0.82rem;
+  flex-wrap: wrap;
 }
 
 .editor-privacy select {
@@ -708,6 +726,40 @@ body,
   background: rgba(5, 8, 14, 0.7);
   color: #eff3ff;
   padding: 6px 8px;
+}
+
+.effective-privacy {
+  color: #9ba8c8;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.privacy-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1em;
+  font-size: 0.76rem;
+  line-height: 1;
+  opacity: 0.7;
+  vertical-align: middle;
+}
+
+.privacy-badge.open {
+  opacity: 0.45;
+}
+
+.privacy-badge.local_only {
+  opacity: 0.7;
+}
+
+.privacy-badge.locked {
+  opacity: 0.82;
+}
+
+.privacy-badge.redacted {
+  opacity: 0.9;
 }
 
 .decay-badge {

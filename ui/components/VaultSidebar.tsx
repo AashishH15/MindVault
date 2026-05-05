@@ -3,6 +3,7 @@ import type { Node, Vault } from "../ipc";
 import { getAllNodes } from "../services/nodes";
 import { createVault, deleteVault, listVaults, resolveVaultPath } from "../services/vaults";
 import { AppError } from "../services/ipcResult";
+import { PrivacyBadge } from "./PrivacyBadge";
 
 type VaultSidebarProps = {
   selectedVaultId: string | null;
@@ -262,7 +263,10 @@ function VaultSidebar({
                   className="list-main"
                   onClick={() => onSelectVaultEntry(vault)}
                 >
-                  <span>{vault.name}</span>
+                  <span className="list-title-row">
+                    <span>{vault.name}</span>
+                    <PrivacyBadge tier={vault.privacyTier} />
+                  </span>
                   {vault.description && <small>{vault.description}</small>}
                 </button>
                 <button
@@ -296,7 +300,10 @@ function VaultSidebar({
                           className="list-main"
                           onClick={() => onSelectVaultEntry(child)}
                         >
-                          <span>{child.name}</span>
+                          <span className="list-title-row">
+                            <span>{child.name}</span>
+                            <PrivacyBadge tier={child.privacyTier} />
+                          </span>
                           {child.description && <small>{child.description}</small>}
                         </button>
                         <button

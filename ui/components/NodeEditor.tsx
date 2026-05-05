@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { deleteNode, getAllNodes, getNode, updateNode } from "../services/nodes";
-import type { Backlink, Door, Node, Tag } from "../ipc";
+import type { Backlink, Door, Node, Tag, Vault } from "../ipc";
 import { AppError } from "../services/ipcResult";
 import { listVaults, resolveVaultPath } from "../services/vaults";
 import { addNodeTag, createTag, getNodeTags, listTags, removeNodeTag } from "../services/tags";
@@ -11,6 +11,8 @@ import {
   listOutgoingDoors,
   repointDoor,
 } from "../services/doors";
+import { getEffectivePrivacy } from "../utils/privacy";
+import { PrivacyBadge } from "./PrivacyBadge";
 
 type NodeEditorProps = {
   selectedNodeId: string | null;
@@ -34,6 +36,7 @@ function NodeEditor({ selectedNodeId, refreshKey, onNodeDeleted, onSaveSuccess }
   const [incomingDoors, setIncomingDoors] = useState<Backlink[]>([]);
   const [allNodes, setAllNodes] = useState<Node[]>([]);
   const [allNodesMap, setAllNodesMap] = useState<Record<string, Node>>({});
+  const [vaults, setVaults] = useState<Vault[]>([]);
   const [isDoorPickerOpen, setIsDoorPickerOpen] = useState(false);
   const [doorSearchQuery, setDoorSearchQuery] = useState("");
   const [doorTargetId, setDoorTargetId] = useState<string | null>(null);
@@ -202,8 +205,9 @@ function NodeEditor({ selectedNodeId, refreshKey, onNodeDeleted, onSaveSuccess }
     const timer = window.setTimeout(() => {
       void (async () => {
         try {
-          const vaults = await listVaults();
-          setBreadcrumbPath(resolveVaultPath(node, vaults));
+          const list = await listVaults();
+          setVaults(list);
+          setBreadcrumbPath(resolveVaultPath(node, list));
         } catch (err) {
           if (err instanceof AppError) {
             setStatus(err.message);
@@ -383,6 +387,18 @@ function NodeEditor({ selectedNodeId, refreshKey, onNodeDeleted, onSaveSuccess }
     });
   }, [allNodes, connectedTargetIds, doorSearchQuery, node]);
 
+  const effectivePrivacyTier = useMemo(() => {
+    if (!node) {
+      return "open";
+    }
+    const subVault = node.subVaultId
+      ? vaults.find((vault) => vault.id === node.subVaultId)
+      : undefined;
+    const parentVaultId = subVault?.parentVaultId ?? node.vaultId;
+    const parentVault = vaults.find((vault) => vault.id === parentVaultId);
+    return getEffectivePrivacy(editPrivacy, subVault?.privacyTier, parentVault?.privacyTier);
+  }, [editPrivacy, node, vaults]);
+
   async function onAddExistingTag(tag: Tag) {
     if (!node) {
       return;
@@ -537,6 +553,9 @@ function NodeEditor({ selectedNodeId, refreshKey, onNodeDeleted, onSaveSuccess }
                 <option value="locked">Locked</option>
                 <option value="redacted">Redacted</option>
               </select>
+              <span className="effective-privacy">
+                (Effective: <PrivacyBadge tier={effectivePrivacyTier} />)
+              </span>
             </label>
             {decayScore !== null && (
               <span className="decay-badge">Decay: {decayScore.toFixed(2)}</span>
