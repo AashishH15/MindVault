@@ -112,3 +112,7 @@ export function doorListIncoming(nodeId: string) {
 export function doorDelete(doorId: string) {
   return invokeTyped<boolean>("door_delete", { doorId });
 }
+
+export function doorRepoint(doorId: string, targetNodeId: string) {
+  return invokeTyped<boolean>("door_repoint", { doorId, targetNodeId });
+}

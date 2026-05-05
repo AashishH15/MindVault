@@ -756,6 +756,30 @@ fn door_delete(door_id: String, state: tauri::State<'_, DbState>) -> IpcResponse
 }
 
 #[tauri::command]
+fn door_repoint(
+    door_id: String,
+    target_node_id: String,
+    state: tauri::State<'_, DbState>,
+) -> IpcResponse<bool> {
+    into_ipc((|| {
+        let conn = open_connection(&state.db_path)?;
+        let affected = conn
+            .execute(
+                "UPDATE doors
+                 SET target_node_id = ?2,
+                     status = 'active',
+                     orphan_reason = NULL,
+                     orphan_since = NULL,
+                     updated_at = datetime('now')
+                 WHERE id = ?1;",
+                params![door_id, target_node_id],
+            )
+            .map_err(|err| format!("Failed repointing door: {err}"))?;
+        Ok(affected > 0)
+    })())
+}
+
+#[tauri::command]
 fn node_create(input: NodeCreateInput, state: tauri::State<'_, DbState>) -> IpcResponse<Node> {
     into_ipc((|| {
         let mut conn = open_connection(&state.db_path)?;
@@ -945,7 +969,8 @@ pub fn run() {
             door_create,
             door_list_outgoing,
             door_list_incoming,
-            door_delete
+            door_delete,
+            door_repoint
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

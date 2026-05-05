@@ -1,9 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { deleteNode, getNode, updateNode } from "../services/nodes";
-import type { Node, Tag } from "../ipc";
+import { deleteNode, getAllNodes, getNode, updateNode } from "../services/nodes";
+import type { Backlink, Door, Node, Tag } from "../ipc";
 import { AppError } from "../services/ipcResult";
 import { listVaults, resolveVaultPath } from "../services/vaults";
 import { addNodeTag, createTag, getNodeTags, listTags, removeNodeTag } from "../services/tags";
+import {
+  createDoor,
+  deleteDoor,
+  listIncomingDoors,
+  listOutgoingDoors,
+  repointDoor,
+} from "../services/doors";
 
 type NodeEditorProps = {
   selectedNodeId: string | null;
@@ -23,6 +30,15 @@ function NodeEditor({ selectedNodeId, refreshKey, onNodeDeleted, onSaveSuccess }
   const [tagInput, setTagInput] = useState("");
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [tagRefreshKey, setTagRefreshKey] = useState(0);
+  const [outgoingDoors, setOutgoingDoors] = useState<Door[]>([]);
+  const [incomingDoors, setIncomingDoors] = useState<Backlink[]>([]);
+  const [allNodes, setAllNodes] = useState<Node[]>([]);
+  const [allNodesMap, setAllNodesMap] = useState<Record<string, Node>>({});
+  const [isDoorPickerOpen, setIsDoorPickerOpen] = useState(false);
+  const [doorSearchQuery, setDoorSearchQuery] = useState("");
+  const [doorTargetId, setDoorTargetId] = useState<string | null>(null);
+  const [doorLabelInput, setDoorLabelInput] = useState("");
+  const [repointDoorId, setRepointDoorId] = useState<string | null>(null);
   const [breadcrumbPath, setBreadcrumbPath] = useState("");
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
   const [status, setStatus] = useState<string>("");
@@ -47,6 +63,23 @@ function NodeEditor({ selectedNodeId, refreshKey, onNodeDeleted, onSaveSuccess }
     setNodeTags(result.data ?? []);
   }
 
+  async function refreshDoors(nodeId: string) {
+    const [outgoing, incoming] = await Promise.all([
+      listOutgoingDoors(nodeId),
+      listIncomingDoors(nodeId),
+    ]);
+    if (outgoing.error) {
+      setStatus(outgoing.error.message);
+    } else {
+      setOutgoingDoors(outgoing.data ?? []);
+    }
+    if (incoming.error) {
+      setStatus(incoming.error.message);
+    } else {
+      setIncomingDoors(incoming.data ?? []);
+    }
+  }
+
   useEffect(() => {
     if (!selectedNodeId) {
       const clearTimer = window.setTimeout(() => {
@@ -56,8 +89,15 @@ function NodeEditor({ selectedNodeId, refreshKey, onNodeDeleted, onSaveSuccess }
         setEditDetail("");
         setEditPrivacy("open");
         setNodeTags([]);
+        setOutgoingDoors([]);
+        setIncomingDoors([]);
         setTagInput("");
         setIsDropdownOpen(false);
+        setIsDoorPickerOpen(false);
+        setDoorSearchQuery("");
+        setDoorTargetId(null);
+        setDoorLabelInput("");
+        setRepointDoorId(null);
         setBreadcrumbPath("");
         setSaveStatus("idle");
       }, 0);
@@ -68,10 +108,17 @@ function NodeEditor({ selectedNodeId, refreshKey, onNodeDeleted, onSaveSuccess }
 
     async function loadNode() {
       try {
-        const [node, tagsResult] = await Promise.all([getNode(nodeId), getNodeTags(nodeId)]);
+        const [node, tagsResult, outgoingResult, incomingResult] = await Promise.all([
+          getNode(nodeId),
+          getNodeTags(nodeId),
+          listOutgoingDoors(nodeId),
+          listIncomingDoors(nodeId),
+        ]);
         if (!node) {
           setNode(null);
           setNodeTags([]);
+          setOutgoingDoors([]);
+          setIncomingDoors([]);
           setStatus("Node not found.");
           return;
         }
@@ -81,6 +128,21 @@ function NodeEditor({ selectedNodeId, refreshKey, onNodeDeleted, onSaveSuccess }
         } else {
           setNodeTags(tagsResult.data ?? []);
         }
+        if (outgoingResult.error) {
+          setStatus(outgoingResult.error.message);
+        } else {
+          setOutgoingDoors(outgoingResult.data ?? []);
+        }
+        if (incomingResult.error) {
+          setStatus(incomingResult.error.message);
+        } else {
+          setIncomingDoors(incomingResult.data ?? []);
+        }
+        setIsDoorPickerOpen(false);
+        setDoorSearchQuery("");
+        setDoorTargetId(null);
+        setDoorLabelInput("");
+        setRepointDoorId(null);
         setStatus("");
       } catch (err) {
         if (err instanceof AppError) {
@@ -103,6 +165,31 @@ function NodeEditor({ selectedNodeId, refreshKey, onNodeDeleted, onSaveSuccess }
     }, 0);
     return () => window.clearTimeout(timer);
   }, [tagRefreshKey]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const nodes = await getAllNodes();
+          const map: Record<string, Node> = {};
+          for (const item of nodes) {
+            map[item.id] = item;
+          }
+          setAllNodes(nodes);
+          setAllNodesMap(map);
+        } catch (err) {
+          if (err instanceof AppError) {
+            setStatus(err.message);
+          } else {
+            setStatus("Failed to load nodes map.");
+          }
+          setAllNodes([]);
+          setAllNodesMap({});
+        }
+      })();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [refreshKey]);
 
   useEffect(() => {
     if (!node) {
@@ -264,6 +351,38 @@ function NodeEditor({ selectedNodeId, refreshKey, onNodeDeleted, onSaveSuccess }
     return availableTags.some((tag) => tag.name.toLowerCase() === normalizedTagInput);
   }, [availableTags, normalizedTagInput]);
 
+  const connectedTargetIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const door of outgoingDoors) {
+      if (door.targetNodeId) {
+        ids.add(door.targetNodeId);
+      }
+    }
+    return ids;
+  }, [outgoingDoors]);
+
+  const filteredDoorTargets = useMemo(() => {
+    const query = doorSearchQuery.trim().toLowerCase();
+    if (!node) {
+      return [];
+    }
+    return allNodes.filter((candidate) => {
+      if (candidate.id === node.id) {
+        return false;
+      }
+      if (connectedTargetIds.has(candidate.id)) {
+        return false;
+      }
+      if (!query) {
+        return true;
+      }
+      return (
+        candidate.title.toLowerCase().includes(query) ||
+        candidate.summary.toLowerCase().includes(query)
+      );
+    });
+  }, [allNodes, connectedTargetIds, doorSearchQuery, node]);
+
   async function onAddExistingTag(tag: Tag) {
     if (!node) {
       return;
@@ -312,6 +431,62 @@ function NodeEditor({ selectedNodeId, refreshKey, onNodeDeleted, onSaveSuccess }
       return;
     }
     setNodeTags((prev) => prev.filter((tag) => tag.id !== tagId));
+  }
+
+  async function onDoorDelete(doorId: string) {
+    if (!node) {
+      return;
+    }
+    const result = await deleteDoor(doorId);
+    if (result.error) {
+      setStatus(result.error.message);
+      return;
+    }
+    await refreshDoors(node.id);
+  }
+
+  async function onConfirmConnection() {
+    if (!node || !doorTargetId) {
+      return;
+    }
+    const result = repointDoorId
+      ? await repointDoor(repointDoorId, doorTargetId)
+      : await createDoor({
+          sourceNodeId: node.id,
+          targetNodeId: doorTargetId,
+          label: doorLabelInput.trim() ? doorLabelInput.trim() : undefined,
+        });
+    if (result.error) {
+      setStatus(result.error.message);
+      return;
+    }
+    await refreshDoors(node.id);
+    setIsDoorPickerOpen(false);
+    setDoorSearchQuery("");
+    setDoorTargetId(null);
+    setDoorLabelInput("");
+    setRepointDoorId(null);
+  }
+
+  function onStartRepoint(doorId: string) {
+    setRepointDoorId(doorId);
+    setIsDoorPickerOpen(true);
+    setDoorSearchQuery("");
+    setDoorTargetId(null);
+    setDoorLabelInput("");
+  }
+
+  function onToggleDoorPicker() {
+    setIsDoorPickerOpen((value) => {
+      const next = !value;
+      if (!next) {
+        setRepointDoorId(null);
+        setDoorSearchQuery("");
+        setDoorTargetId(null);
+        setDoorLabelInput("");
+      }
+      return next;
+    });
   }
 
   async function onDelete() {
@@ -436,6 +611,104 @@ function NodeEditor({ selectedNodeId, refreshKey, onNodeDeleted, onSaveSuccess }
             onChange={(e) => setEditDetail(e.target.value)}
             placeholder="Detail"
           />
+          <div className="connections-section">
+            <div className="connections-header">
+              <h4>Connections</h4>
+              <button type="button" onClick={onToggleDoorPicker}>
+                + Add Connection
+              </button>
+            </div>
+            <div className="door-list">
+              {outgoingDoors.map((door) => {
+                const targetNode = door.targetNodeId ? allNodesMap[door.targetNodeId] : undefined;
+                const targetTitle = targetNode?.title ?? "Missing target node";
+                return (
+                  <div
+                    key={door.id}
+                    className={`door-item ${door.status === "orphaned" ? "orphaned" : ""}`}
+                  >
+                    <div className="door-main">
+                      <strong>{targetTitle}</strong>
+                      {door.status === "orphaned" && (
+                        <span className="door-orphan-badge">[Orphaned]</span>
+                      )}
+                      {door.label && <span className="door-label">{door.label}</span>}
+                    </div>
+                    <div className="door-actions">
+                      {door.status === "orphaned" && (
+                        <button
+                          type="button"
+                          className="door-repoint"
+                          onClick={() => onStartRepoint(door.id)}
+                        >
+                          Re-point
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => void onDoorDelete(door.id)}
+                        aria-label="Delete door"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="door-list incoming">
+              {incomingDoors
+                .filter((backlink) => Boolean(allNodesMap[backlink.sourceNodeId]))
+                .map((backlink) => {
+                  const sourceNode = allNodesMap[backlink.sourceNodeId];
+                  const sourceTitle = sourceNode.title;
+                  return (
+                    <div key={backlink.id} className="door-item">
+                      <div className="door-main">
+                        <strong>{sourceTitle}</strong>
+                        <span className="door-label">Incoming</span>
+                      </div>
+                    </div>
+                  );
+                })}
+            </div>
+            {isDoorPickerOpen && (
+              <div className="door-picker">
+                {repointDoorId && <p className="door-picker-mode">Re-point orphaned door</p>}
+                <input
+                  type="search"
+                  value={doorSearchQuery}
+                  onChange={(e) => setDoorSearchQuery(e.target.value)}
+                  placeholder="Search nodes to connect..."
+                />
+                <div className="door-search-results">
+                  {filteredDoorTargets.map((target) => (
+                    <button
+                      key={target.id}
+                      type="button"
+                      onClick={() => setDoorTargetId(target.id)}
+                    >
+                      <strong>{target.title}</strong>
+                      <small>{target.summary.slice(0, 72)}</small>
+                    </button>
+                  ))}
+                </div>
+                {doorTargetId && (
+                  <div className="door-create-row">
+                    <input
+                      type="text"
+                      placeholder="Optional label..."
+                      value={doorLabelInput}
+                      onChange={(e) => setDoorLabelInput(e.target.value)}
+                    />
+                    <button type="button" onClick={() => void onConfirmConnection()}>
+                      Confirm Connect
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       )}
       {status && <p className="pane-status">{status}</p>}

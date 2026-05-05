@@ -3,6 +3,7 @@ import {
   doorDelete,
   doorListIncoming,
   doorListOutgoing,
+  doorRepoint,
   type Backlink,
   type Door,
   type DoorCreateInput,
@@ -44,6 +45,17 @@ export async function listIncomingDoors(nodeId: string): Promise<ServiceResult<B
 
 export async function deleteDoor(doorId: string): Promise<ServiceResult<boolean>> {
   const result = await doorDelete(doorId);
+  if ("ok" in result) {
+    return { data: result.ok, error: null };
+  }
+  return { data: null, error: toAppError(result.err) };
+}
+
+export async function repointDoor(
+  doorId: string,
+  targetNodeId: string
+): Promise<ServiceResult<boolean>> {
+  const result = await doorRepoint(doorId, targetNodeId);
   if ("ok" in result) {
     return { data: result.ok, error: null };
   }
