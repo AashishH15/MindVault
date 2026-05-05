@@ -1,3 +1,6 @@
+export type { Backlink } from "./Backlink";
+export type { Door } from "./Door";
+export type { DoorCreateInput } from "./DoorCreateInput";
 export type { Node } from "./Node";
 export type { NodeCreateInput } from "./NodeCreateInput";
 export type { NodeUpdateInput } from "./NodeUpdateInput";

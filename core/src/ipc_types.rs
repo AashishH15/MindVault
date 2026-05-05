@@ -144,6 +144,46 @@ pub struct TagCreateInput {
     pub color: Option<String>,
 }
 
+#[derive(Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../ui/types/generated/")]
+pub struct Door {
+    pub id: String,
+    pub source_node_id: String,
+    pub target_node_id: Option<String>,
+    pub target_vault_id: Option<String>,
+    pub label: Option<String>,
+    pub status: String,
+    pub orphan_reason: Option<String>,
+    pub orphan_since: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../ui/types/generated/")]
+pub struct DoorCreateInput {
+    pub source_node_id: String,
+    #[ts(optional)]
+    pub target_node_id: Option<String>,
+    #[ts(optional)]
+    pub target_vault_id: Option<String>,
+    #[ts(optional)]
+    pub label: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../ui/types/generated/")]
+pub struct Backlink {
+    pub id: String,
+    pub target_node_id: String,
+    pub source_node_id: String,
+    pub door_id: String,
+    pub created_at: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -157,5 +197,8 @@ mod tests {
         NodeUpdateInput::export().expect("failed to export NodeUpdateInput");
         Tag::export().expect("failed to export Tag");
         TagCreateInput::export().expect("failed to export TagCreateInput");
+        Door::export().expect("failed to export Door");
+        DoorCreateInput::export().expect("failed to export DoorCreateInput");
+        Backlink::export().expect("failed to export Backlink");
     }
 }

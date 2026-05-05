@@ -1,5 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  Backlink,
+  Door,
+  DoorCreateInput,
   Node,
   NodeCreateInput,
   NodeUpdateInput,
@@ -11,6 +14,9 @@ import type {
 
 export type IpcResult<T> = { ok: T } | { err: string };
 export type {
+  Backlink,
+  Door,
+  DoorCreateInput,
   Node,
   NodeCreateInput,
   NodeUpdateInput,
@@ -89,4 +95,20 @@ export function nodeTagAdd(nodeId: string, tagId: string) {
 
 export function nodeTagRemove(nodeId: string, tagId: string) {
   return invokeTyped<boolean>("node_tag_remove", { nodeId, tagId });
+}
+
+export function doorCreate(input: DoorCreateInput) {
+  return invokeTyped<Door>("door_create", { input });
+}
+
+export function doorListOutgoing(nodeId: string) {
+  return invokeTyped<Door[]>("door_list_outgoing", { nodeId });
+}
+
+export function doorListIncoming(nodeId: string) {
+  return invokeTyped<Backlink[]>("door_list_incoming", { nodeId });
+}
+
+export function doorDelete(doorId: string) {
+  return invokeTyped<boolean>("door_delete", { doorId });
 }

@@ -7,7 +7,8 @@ use tauri::Manager;
 
 mod ipc_types;
 use ipc_types::{
-    Node, NodeCreateInput, NodeUpdateInput, Tag, TagCreateInput, Vault, VaultCreateInput,
+    Backlink, Door, DoorCreateInput, Node, NodeCreateInput, NodeUpdateInput, Tag, TagCreateInput,
+    Vault, VaultCreateInput,
 };
 
 struct DbState {
@@ -108,6 +109,31 @@ fn tag_from_row(row: &Row<'_>) -> rusqlite::Result<Tag> {
     })
 }
 
+fn door_from_row(row: &Row<'_>) -> rusqlite::Result<Door> {
+    Ok(Door {
+        id: row.get(0)?,
+        source_node_id: row.get(1)?,
+        target_node_id: row.get(2)?,
+        target_vault_id: row.get(3)?,
+        label: row.get(4)?,
+        status: row.get(5)?,
+        orphan_reason: row.get(6)?,
+        orphan_since: row.get(7)?,
+        created_at: row.get(8)?,
+        updated_at: row.get(9)?,
+    })
+}
+
+fn backlink_from_row(row: &Row<'_>) -> rusqlite::Result<Backlink> {
+    Ok(Backlink {
+        id: row.get(0)?,
+        target_node_id: row.get(1)?,
+        source_node_id: row.get(2)?,
+        door_id: row.get(3)?,
+        created_at: row.get(4)?,
+    })
+}
+
 fn fetch_vault_by_id(conn: &Connection, vault_id: &str) -> Result<Vault, String> {
     conn.query_row(
         "SELECT id, parent_vault_id, name, icon, description, privacy_tier, decay_rate, summary_node_id,
@@ -182,6 +208,18 @@ fn fetch_tag_by_id(conn: &Connection, tag_id: &str) -> Result<Tag, String> {
         tag_from_row,
     )
     .map_err(|err| format!("Failed fetching tag {tag_id}: {err}"))
+}
+
+fn fetch_door_by_id(conn: &Connection, door_id: &str) -> Result<Door, String> {
+    conn.query_row(
+        "SELECT id, source_node_id, target_node_id, target_vault_id, label, status, orphan_reason,
+                orphan_since, created_at, updated_at
+         FROM doors
+         WHERE id = ?1;",
+        [door_id],
+        door_from_row,
+    )
+    .map_err(|err| format!("Failed fetching door {door_id}: {err}"))
 }
 
 fn fetch_nodes(conn: &Connection) -> Result<Vec<Node>, String> {
@@ -623,6 +661,101 @@ fn node_tag_remove(
 }
 
 #[tauri::command]
+fn door_create(input: DoorCreateInput, state: tauri::State<'_, DbState>) -> IpcResponse<Door> {
+    into_ipc((|| {
+        let mut conn = open_connection(&state.db_path)?;
+        let tx = conn
+            .transaction()
+            .map_err(|err| format!("Failed starting door_create transaction: {err}"))?;
+
+        let id = generate_id(&tx, "door")?;
+        tx.execute(
+            "INSERT INTO doors (id, source_node_id, target_node_id, target_vault_id, label)
+             VALUES (?1, ?2, ?3, ?4, ?5);",
+            params![
+                id,
+                input.source_node_id,
+                input.target_node_id,
+                input.target_vault_id,
+                input.label
+            ],
+        )
+        .map_err(|err| format!("Failed inserting door: {err}"))?;
+
+        tx.commit()
+            .map_err(|err| format!("Failed committing door_create: {err}"))?;
+
+        fetch_door_by_id(&conn, &id)
+    })())
+}
+
+#[tauri::command]
+fn door_list_outgoing(node_id: String, state: tauri::State<'_, DbState>) -> IpcResponse<Vec<Door>> {
+    into_ipc((|| {
+        let conn = open_connection(&state.db_path)?;
+        let mut statement = conn
+            .prepare(
+                "SELECT id, source_node_id, target_node_id, target_vault_id, label, status, orphan_reason,
+                        orphan_since, created_at, updated_at
+                 FROM doors
+                 WHERE source_node_id = ?1
+                 ORDER BY created_at DESC;",
+            )
+            .map_err(|err| format!("Failed preparing door_list_outgoing query: {err}"))?;
+
+        let rows = statement
+            .query_map([node_id], door_from_row)
+            .map_err(|err| format!("Failed querying outgoing doors: {err}"))?;
+
+        let mut doors = Vec::new();
+        for row in rows {
+            doors.push(row.map_err(|err| format!("Failed decoding outgoing door row: {err}"))?);
+        }
+        Ok(doors)
+    })())
+}
+
+#[tauri::command]
+fn door_list_incoming(
+    node_id: String,
+    state: tauri::State<'_, DbState>,
+) -> IpcResponse<Vec<Backlink>> {
+    into_ipc((|| {
+        let conn = open_connection(&state.db_path)?;
+        let mut statement = conn
+            .prepare(
+                "SELECT id, target_node_id, source_node_id, door_id, created_at
+                 FROM backlinks
+                 WHERE target_node_id = ?1
+                 ORDER BY created_at DESC;",
+            )
+            .map_err(|err| format!("Failed preparing door_list_incoming query: {err}"))?;
+
+        let rows = statement
+            .query_map([node_id], backlink_from_row)
+            .map_err(|err| format!("Failed querying incoming doors: {err}"))?;
+
+        let mut backlinks = Vec::new();
+        for row in rows {
+            backlinks
+                .push(row.map_err(|err| format!("Failed decoding incoming backlink row: {err}"))?);
+        }
+        Ok(backlinks)
+    })())
+}
+
+#[tauri::command]
+fn door_delete(door_id: String, state: tauri::State<'_, DbState>) -> IpcResponse<bool> {
+    into_ipc((|| {
+        let conn = open_connection(&state.db_path)?;
+        let affected = conn
+            .execute("DELETE FROM doors WHERE id = ?1;", [door_id])
+            .map_err(|err| format!("Failed deleting door: {err}"))?;
+        Ok(affected > 0)
+    })())
+}
+
+#[tauri::command]
 fn node_create(input: NodeCreateInput, state: tauri::State<'_, DbState>) -> IpcResponse<Node> {
     into_ipc((|| {
         let mut conn = open_connection(&state.db_path)?;
@@ -808,7 +941,11 @@ pub fn run() {
             tag_create,
             node_tags_get,
             node_tag_add,
-            node_tag_remove
+            node_tag_remove,
+            door_create,
+            door_list_outgoing,
+            door_list_incoming,
+            door_delete
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
