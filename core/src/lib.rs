@@ -38,7 +38,9 @@ fn greet(name: &str) -> IpcResponse<String> {
     }
 }
 
-fn sqlite_db_path(app: &tauri::App) -> Result<PathBuf, Box<dyn std::error::Error>> {
+fn sqlite_db_path<R: tauri::Runtime>(
+    app: &tauri::App<R>,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let app_data_dir = app.path().app_data_dir()?;
     fs::create_dir_all(&app_data_dir)?;
     Ok(app_data_dir.join("mindvault.db"))
@@ -1002,7 +1004,7 @@ fn node_delete(node_id: String, state: tauri::State<'_, DbState>) -> IpcResponse
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    tauri::Builder::<tauri::Wry>::default()
         .setup(|app| {
             let db_path = sqlite_db_path(app)?;
             let mut conn = open_connection(&db_path)
