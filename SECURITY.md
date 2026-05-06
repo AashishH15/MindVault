@@ -18,10 +18,10 @@ MindVault is currently in active development. Security updates and patches are e
 
 If you believe you have found a security vulnerability in MindVault such as an IPC bridge exploit, a bypass of the Redacted/Locked privacy tiers, or a local path traversal please report it directly to the maintainer.
 
-### How to Report
+### How to Report (Check first!)
 
 1. **GitHub Private Vulnerability Reporting:** Navigate to the **Security** tab of this repository, click **Advisories**, and select **Report a vulnerability**. 
-2. In the future may create a discord server.
+2. **[Discord Server](https://discord.gg/V8dmEXfvhs) Bug Report**: Alternatively, you can report to ask of your findings.
 
 ### What to Include
 
