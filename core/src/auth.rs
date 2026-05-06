@@ -4,11 +4,45 @@ use argon2::{
 };
 use rand_core::OsRng;
 use rusqlite::params;
+use std::fmt;
 
 use crate::{into_ipc, open_connection, DbState, IpcResponse};
 
 const MASTER_SECRET_HASH_KEY: &str = "auth_master_secret_hash";
 const LEGACY_MASTER_PASSWORD_KEY: &str = "master_password_hash";
+
+#[derive(Debug)]
+enum AppError {
+    Hashing(String),
+}
+
+impl fmt::Display for AppError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            AppError::Hashing(message) => write!(f, "{message}"),
+        }
+    }
+}
+
+fn hash_password(password: &str) -> Result<String, AppError> {
+    let salt = SaltString::generate(&mut OsRng);
+    let argon2 = Argon2::default();
+    argon2
+        .hash_password(password.as_bytes(), &salt)
+        .map(|hash| hash.to_string())
+        .map_err(|err| AppError::Hashing(format!("Failed hashing secret: {err}")))
+}
+
+fn verify_password_hash(hash: &str, password: &str) -> bool {
+    let parsed_hash = match PasswordHash::new(hash) {
+        Ok(value) => value,
+        Err(_) => return false,
+    };
+
+    Argon2::default()
+        .verify_password(password.as_bytes(), &parsed_hash)
+        .is_ok()
+}
 
 fn fetch_master_hash(conn: &rusqlite::Connection) -> Result<Option<String>, String> {
     conn.query_row(
@@ -41,12 +75,7 @@ pub fn auth_secret_is_setup(state: tauri::State<'_, DbState>) -> IpcResponse<boo
 #[tauri::command]
 pub fn auth_secret_set(passphrase: String, state: tauri::State<'_, DbState>) -> IpcResponse<bool> {
     into_ipc((|| {
-        let salt = SaltString::generate(&mut OsRng);
-        let argon2 = Argon2::default();
-        let phc_hash = argon2
-            .hash_password(passphrase.as_bytes(), &salt)
-            .map_err(|err| format!("Failed hashing secret: {err}"))?
-            .to_string();
+        let phc_hash = hash_password(&passphrase).map_err(|err| err.to_string())?;
 
         let stored_value = serde_json::to_string(&phc_hash)
             .map_err(|err| format!("Failed serializing master secret hash: {err}"))?;
@@ -87,11 +116,30 @@ pub fn auth_secret_verify(
         let phc_hash: String = serde_json::from_str(&stored_value)
             .map_err(|err| format!("Failed parsing stored master secret hash: {err}"))?;
 
-        let parsed_hash = PasswordHash::new(&phc_hash)
-            .map_err(|err| format!("Failed parsing argon2 PHC hash: {err}"))?;
-
-        Ok(Argon2::default()
-            .verify_password(passphrase.as_bytes(), &parsed_hash)
-            .is_ok())
+        Ok(verify_password_hash(&phc_hash, &passphrase))
     })())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{hash_password, verify_password_hash};
+
+    #[test]
+    fn hash_and_verify_valid_password() {
+        let password = "correct horse battery staple";
+        let hash = match hash_password(password) {
+            Ok(value) => value,
+            Err(err) => panic!("failed to hash password in test: {err}"),
+        };
+        assert!(verify_password_hash(&hash, password));
+    }
+
+    #[test]
+    fn hash_verification_fails_for_invalid_password() {
+        let hash = match hash_password("right-secret") {
+            Ok(value) => value,
+            Err(err) => panic!("failed to hash password in test: {err}"),
+        };
+        assert!(!verify_password_hash(&hash, "wrong-secret"));
+    }
 }

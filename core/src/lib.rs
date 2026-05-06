@@ -1043,5 +1043,8 @@ pub fn run() {
             auth::auth_secret_verify
         ])
         .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .unwrap_or_else(|err| {
+            eprintln!("error while running tauri application: {err}");
+            std::process::exit(1);
+        });
 }

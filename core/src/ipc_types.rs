@@ -203,16 +203,38 @@ mod tests {
 
     #[test]
     fn export_typescript_bindings() {
-        Vault::export().expect("failed to export Vault");
-        VaultCreateInput::export().expect("failed to export VaultCreateInput");
-        VaultUpdateInput::export().expect("failed to export VaultUpdateInput");
-        Node::export().expect("failed to export Node");
-        NodeCreateInput::export().expect("failed to export NodeCreateInput");
-        NodeUpdateInput::export().expect("failed to export NodeUpdateInput");
-        Tag::export().expect("failed to export Tag");
-        TagCreateInput::export().expect("failed to export TagCreateInput");
-        Door::export().expect("failed to export Door");
-        DoorCreateInput::export().expect("failed to export DoorCreateInput");
-        Backlink::export().expect("failed to export Backlink");
+        if let Err(err) = Vault::export() {
+            panic!("failed to export Vault: {err}");
+        }
+        if let Err(err) = VaultCreateInput::export() {
+            panic!("failed to export VaultCreateInput: {err}");
+        }
+        if let Err(err) = VaultUpdateInput::export() {
+            panic!("failed to export VaultUpdateInput: {err}");
+        }
+        if let Err(err) = Node::export() {
+            panic!("failed to export Node: {err}");
+        }
+        if let Err(err) = NodeCreateInput::export() {
+            panic!("failed to export NodeCreateInput: {err}");
+        }
+        if let Err(err) = NodeUpdateInput::export() {
+            panic!("failed to export NodeUpdateInput: {err}");
+        }
+        if let Err(err) = Tag::export() {
+            panic!("failed to export Tag: {err}");
+        }
+        if let Err(err) = TagCreateInput::export() {
+            panic!("failed to export TagCreateInput: {err}");
+        }
+        if let Err(err) = Door::export() {
+            panic!("failed to export Door: {err}");
+        }
+        if let Err(err) = DoorCreateInput::export() {
+            panic!("failed to export DoorCreateInput: {err}");
+        }
+        if let Err(err) = Backlink::export() {
+            panic!("failed to export Backlink: {err}");
+        }
     }
 }

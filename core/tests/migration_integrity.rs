@@ -13,10 +13,13 @@ fn migration_file_path() -> PathBuf {
 }
 
 fn apply_migration(conn: &Connection) {
-    let migration_sql =
-        fs::read_to_string(migration_file_path()).expect("failed to read schema migration file");
-    conn.execute_batch(&migration_sql)
-        .expect("failed to execute schema migration");
+    let migration_sql = match fs::read_to_string(migration_file_path()) {
+        Ok(value) => value,
+        Err(err) => panic!("failed to read schema migration file: {err}"),
+    };
+    if let Err(err) = conn.execute_batch(&migration_sql) {
+        panic!("failed to execute schema migration: {err}");
+    }
 }
 
 fn assert_tables_exist(conn: &Connection) {
@@ -43,13 +46,14 @@ fn assert_tables_exist(conn: &Connection) {
     ];
 
     for table in required_tables {
-        let exists = conn
-            .query_row(
-                "SELECT COUNT(1) FROM sqlite_master WHERE type = 'table' AND name = ?1;",
-                [table],
-                |row| row.get::<_, i64>(0),
-            )
-            .expect("failed to query sqlite_master for table");
+        let exists = match conn.query_row(
+            "SELECT COUNT(1) FROM sqlite_master WHERE type = 'table' AND name = ?1;",
+            [table],
+            |row| row.get::<_, i64>(0),
+        ) {
+            Ok(value) => value,
+            Err(err) => panic!("failed to query sqlite_master for table: {err}"),
+        };
         assert!(exists > 0, "missing table: {table}");
     }
 }
@@ -84,13 +88,14 @@ fn assert_indexes_exist(conn: &Connection) {
     ];
 
     for index in required_indexes {
-        let exists = conn
-            .query_row(
-                "SELECT COUNT(1) FROM sqlite_master WHERE type = 'index' AND name = ?1;",
-                [index],
-                |row| row.get::<_, i64>(0),
-            )
-            .expect("failed to query sqlite_master for index");
+        let exists = match conn.query_row(
+            "SELECT COUNT(1) FROM sqlite_master WHERE type = 'index' AND name = ?1;",
+            [index],
+            |row| row.get::<_, i64>(0),
+        ) {
+            Ok(value) => value,
+            Err(err) => panic!("failed to query sqlite_master for index: {err}"),
+        };
         assert!(exists > 0, "missing index: {index}");
     }
 }
@@ -114,16 +119,21 @@ fn assert_foreign_keys_exist(conn: &Connection) {
 
     for (table, expected_targets) in fk_expectations {
         let pragma_sql = format!("PRAGMA foreign_key_list({table});");
-        let mut statement = conn
-            .prepare(&pragma_sql)
-            .expect("failed to prepare pragma query");
-        let fk_rows = statement
-            .query_map([], |row| row.get::<_, String>(2))
-            .expect("failed to query foreign keys");
+        let mut statement = match conn.prepare(&pragma_sql) {
+            Ok(value) => value,
+            Err(err) => panic!("failed to prepare pragma query: {err}"),
+        };
+        let fk_rows = match statement.query_map([], |row| row.get::<_, String>(2)) {
+            Ok(value) => value,
+            Err(err) => panic!("failed to query foreign keys: {err}"),
+        };
 
         let mut target_counts: HashMap<String, usize> = HashMap::new();
         for target_table in fk_rows {
-            let target_table = target_table.expect("failed to decode foreign key row");
+            let target_table = match target_table {
+                Ok(value) => value,
+                Err(err) => panic!("failed to decode foreign key row: {err}"),
+            };
             *target_counts.entry(target_table).or_insert(0) += 1;
         }
 
@@ -139,11 +149,15 @@ fn assert_foreign_keys_exist(conn: &Connection) {
 
 #[test]
 fn schema_integrity_migration_has_tables_indexes_and_foreign_keys() {
-    let conn = Connection::open_in_memory().expect("failed to connect in-memory sqlite");
-    conn.pragma_update(None, "foreign_keys", "ON")
-        .expect("failed to enable foreign keys");
+    let conn = match Connection::open_in_memory() {
+        Ok(value) => value,
+        Err(err) => panic!("failed to connect in-memory sqlite: {err}"),
+    };
+    if let Err(err) = conn.pragma_update(None, "foreign_keys", "ON") {
+        panic!("failed to enable foreign keys: {err}");
+    }
 
-    conn.execute_batch(
+    if let Err(err) = conn.execute_batch(
         r#"
         CREATE TABLE IF NOT EXISTS schema_migrations (
             version INTEGER PRIMARY KEY,
@@ -151,8 +165,9 @@ fn schema_integrity_migration_has_tables_indexes_and_foreign_keys() {
             applied_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
         "#,
-    )
-    .expect("failed to create schema_migrations table");
+    ) {
+        panic!("failed to create schema_migrations table: {err}");
+    }
 
     apply_migration(&conn);
     assert_tables_exist(&conn);

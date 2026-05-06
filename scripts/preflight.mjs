@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createRequire } from "node:module";
 import process from "node:process";
 
 const args = new Set(process.argv.slice(2));
@@ -53,6 +54,69 @@ function run(command, { cwd } = {}) {
   });
 }
 
+function getRgCommand() {
+  // Prefer a local ripgrep binary (cross-platform) when available.
+  // Falls back to `rg` on PATH if not installed.
+  try {
+    const require = createRequire(import.meta.url);
+    const rgPath = require("@vscode/ripgrep").rgPath;
+    if (typeof rgPath === "string" && rgPath.length > 0) {
+      const quoted = rgPath.includes(" ") ? `"${rgPath}"` : rgPath;
+      return quoted;
+    }
+  } catch {
+    // ignore
+  }
+  return "rg";
+}
+
+async function assertRgNoMatches({ name, cmd }) {
+  // ripgrep exit codes:
+  // 0 = matches found
+  // 1 = no matches
+  // 2 = error
+  const code = await run(cmd);
+  if (code === 0) {
+    console.error(`\nBanned pattern matched: ${name}`);
+    return 1;
+  }
+  if (code === 1) {
+    return 0;
+  }
+  console.error(`\nBanned pattern check errored: ${name}`);
+  return code;
+}
+
+async function runBannedPatterns() {
+  const rg = getRgCommand();
+  const checks = [
+    {
+      name: "XSS: dangerouslySetInnerHTML in ui/",
+      cmd: `${rg} "dangerouslySetInnerHTML" ui --glob "*.ts" --glob "*.tsx"`,
+    },
+    {
+      name: "IPC: invoke() directly in ui/components/",
+      cmd: `${rg} "invoke\\(" ui/components`,
+    },
+    {
+      name: "TypeScript: explicit any in ui/",
+      cmd: `${rg} ": any\\b|as any\\b" ui --glob "*.ts" --glob "*.tsx"`,
+    },
+    {
+      name: "Rust logging: secret-ish fields in core/src/",
+      cmd: `${rg} "(tracing|log)::(trace|debug|info|warn|error)!\\([^\\n]*(api_key|password|secret|token)\\s*=" core/src`,
+    },
+  ];
+
+  for (const check of checks) {
+    const code = await assertRgNoMatches(check);
+    if (code !== 0) {
+      return code;
+    }
+  }
+  return 0;
+}
+
 const steps = [
   {
     name: fix ? "prettier (write)" : "prettier (check)",
@@ -62,6 +126,7 @@ const steps = [
     name: fix ? "eslint (fix)" : "eslint",
     cmd: fix ? "npx eslint . --fix" : "npx eslint .",
   },
+  { name: "banned patterns", cmd: runBannedPatterns },
   { name: "tsc (noEmit)", cmd: "npx tsc --noEmit" },
   {
     name: fix ? "cargo fmt" : "cargo fmt (check)",
@@ -71,21 +136,18 @@ const steps = [
   },
   {
     name: "cargo clippy",
-    cmd: "cargo clippy --manifest-path core/Cargo.toml -- -D warnings",
+    cmd: "cargo clippy --manifest-path core/Cargo.toml --all-targets -- -D warnings -D clippy::unwrap_used -D clippy::expect_used",
   },
   { name: "cargo test", cmd: "cargo test --manifest-path core/Cargo.toml" },
 ];
 
 for (const step of steps) {
-   
   console.log(`\n==> ${step.name}`);
-  const code = await run(step.cmd);
+  const code = typeof step.cmd === "function" ? await step.cmd() : await run(step.cmd);
   if (code !== 0) {
-     
     console.error(`\nPreflight failed: ${step.name}`);
     process.exit(code);
   }
 }
 
- 
 console.log("\nPreflight passed.");
