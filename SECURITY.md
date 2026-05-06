@@ -21,7 +21,7 @@ If you believe you have found a security vulnerability in MindVault such as an I
 ### How to Report (Check first!)
 
 1. **GitHub Private Vulnerability Reporting:** Navigate to the **Security** tab of this repository, click **Advisories**, and select **Report a vulnerability**. 
-2. **[Discord Server](https://discord.gg/V8dmEXfvhs) Bug Report**: Alternatively, you can report to ask of your findings.
+2. **[Discord Server](https://discord.gg/UYhqRHbH4M) Bug Report**: Alternatively, you can report to ask of your findings.
 
 ### What to Include
 
