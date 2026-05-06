@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { deleteNode, getAllNodes, getNode, updateNode } from "../services/nodes";
+import { deleteNode, getAllNodes, getNode, touchNode, updateNode } from "../services/nodes";
 import type { Backlink, Door, Node, Tag, Vault } from "../ipc";
 import { AppError } from "../services/ipcResult";
 import { listVaults, resolveVaultPath } from "../services/vaults";
@@ -54,6 +54,7 @@ function NodeEditor({
   const [repointDoorId, setRepointDoorId] = useState<string | null>(null);
   const [breadcrumbPath, setBreadcrumbPath] = useState("");
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
+  const [editDecayRate, setEditDecayRate] = useState("standard");
   const [status, setStatus] = useState<string>("");
   const saveRunIdRef = useRef(0);
   const saveStatusTimeoutRef = useRef<number | null>(null);
@@ -168,6 +169,7 @@ function NodeEditor({
 
     const timer = setTimeout(() => {
       void loadNode();
+      void touchNode(nodeId).catch(() => {});
     }, 0);
     return () => clearTimeout(timer);
   }, [refreshKey, selectedNodeId]);
@@ -238,6 +240,20 @@ function NodeEditor({
       setEditSummary(node?.summary ?? "");
       setEditDetail(node?.detail ?? "");
       setEditPrivacy(node?.privacyTier ?? "open");
+      try {
+        const parsed = node?.decay
+          ? typeof node.decay === "string"
+            ? JSON.parse(node.decay)
+            : node.decay
+          : null;
+        setEditDecayRate(
+          parsed && typeof parsed === "object" && "rate" in parsed
+            ? String(parsed.rate)
+            : "standard"
+        );
+      } catch {
+        setEditDecayRate("standard");
+      }
     }, 0);
     return () => clearTimeout(syncTimer);
   }, [node]);
@@ -257,11 +273,21 @@ function NodeEditor({
     }
 
     const currentPrivacy = node.privacyTier ?? "open";
+    let currentDecayRate = "standard";
+    try {
+      const parsed = typeof node.decay === "string" ? JSON.parse(node.decay) : node.decay;
+      if (parsed && typeof parsed === "object" && "rate" in parsed) {
+        currentDecayRate = String(parsed.rate);
+      }
+    } catch {
+      // keep default
+    }
     const hasChanges =
       editTitle !== (node.title ?? "") ||
       editSummary !== (node.summary ?? "") ||
       editDetail !== (node.detail ?? "") ||
-      editPrivacy !== currentPrivacy;
+      editPrivacy !== currentPrivacy ||
+      editDecayRate !== currentDecayRate;
 
     if (!hasChanges) {
       return;
@@ -284,6 +310,18 @@ function NodeEditor({
             summary: editSummary,
             detail: editDetail,
             privacyTier: editPrivacy,
+            decay: JSON.stringify({
+              ...(() => {
+                try {
+                  const p = typeof node.decay === "string" ? JSON.parse(node.decay) : node.decay;
+                  return typeof p === "object" && p !== null ? p : {};
+                } catch {
+                  return {};
+                }
+              })(),
+              rate: editDecayRate,
+              pinned: editDecayRate === "pinned",
+            }),
           });
           if (runId !== saveRunIdRef.current) {
             return;
@@ -317,7 +355,16 @@ function NodeEditor({
       window.clearTimeout(statusTimer);
       window.clearTimeout(timer);
     };
-  }, [editDetail, editPrivacy, editSummary, editTitle, node, onSaveSuccess, selectedNodeId]);
+  }, [
+    editDecayRate,
+    editDetail,
+    editPrivacy,
+    editSummary,
+    editTitle,
+    node,
+    onSaveSuccess,
+    selectedNodeId,
+  ]);
 
   const decayScore = useMemo(() => {
     if (!node?.decay) {
@@ -670,8 +717,16 @@ function NodeEditor({
                 (Effective: <PrivacyBadge tier={effectivePrivacyTier} />)
               </span>
             </label>
-            {decayScore !== null && (
-              <span className="decay-badge">Decay: {decayScore.toFixed(2)}</span>
+            {!isLocked && (
+              <label className="editor-decay">
+                <span>Decay: {decayScore !== null ? decayScore.toFixed(2) : "1.00"}</span>
+                <select value={editDecayRate} onChange={(e) => setEditDecayRate(e.target.value)}>
+                  <option value="slow">Slow</option>
+                  <option value="standard">Standard</option>
+                  <option value="fast">Fast</option>
+                  <option value="pinned">Pinned</option>
+                </select>
+              </label>
             )}
           </div>
           {isLocked ? (

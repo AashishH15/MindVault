@@ -83,6 +83,10 @@ export function nodeDelete(nodeId: string) {
   return invokeTyped<boolean>("node_delete", { nodeId });
 }
 
+export function nodeTouch(nodeId: string) {
+  return invokeTyped<boolean>("node_touch", { nodeId });
+}
+
 export function tagList() {
   return invokeTyped<Tag[]>("tag_list");
 }

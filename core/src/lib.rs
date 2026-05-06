@@ -986,6 +986,20 @@ fn node_update(input: NodeUpdateInput, state: tauri::State<'_, DbState>) -> IpcR
 }
 
 #[tauri::command]
+fn node_touch(node_id: String, state: tauri::State<'_, DbState>) -> IpcResponse<bool> {
+    into_ipc((|| {
+        let conn = open_connection(&state.db_path)?;
+        let affected = conn
+            .execute(
+                "UPDATE nodes SET last_accessed = datetime('now') WHERE id = ?1 AND deleted_at IS NULL;",
+                [&node_id],
+            )
+            .map_err(|err| format!("Failed touching node: {err}"))?;
+        Ok(affected > 0)
+    })())
+}
+
+#[tauri::command]
 fn node_delete(node_id: String, state: tauri::State<'_, DbState>) -> IpcResponse<bool> {
     into_ipc((|| {
         let conn = open_connection(&state.db_path)?;
@@ -1028,6 +1042,7 @@ pub fn run() {
             node_list,
             node_update,
             node_delete,
+            node_touch,
             tag_list,
             tag_create,
             node_tags_get,

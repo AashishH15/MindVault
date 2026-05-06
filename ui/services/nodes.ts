@@ -3,6 +3,7 @@ import {
   nodeDelete,
   nodeGet,
   nodeList,
+  nodeTouch,
   nodeUpdate,
   type Node,
   type NodeCreateInput,
@@ -32,4 +33,8 @@ export async function updateNode(input: NodeUpdateInput): Promise<Node> {
 
 export async function deleteNode(nodeId: string): Promise<boolean> {
   return unwrapIpcResult(nodeDelete(nodeId));
+}
+
+export async function touchNode(nodeId: string): Promise<boolean> {
+  return unwrapIpcResult(nodeTouch(nodeId));
 }
