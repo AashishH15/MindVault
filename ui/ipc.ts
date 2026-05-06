@@ -124,13 +124,13 @@ export function doorRepoint(doorId: string, targetNodeId: string) {
 }
 
 export function authIsSetup() {
-  return invokeTyped<boolean>("auth_is_setup");
+  return invokeTyped<boolean>("auth_secret_is_setup");
 }
 
 export function authSetPassword(password: string) {
-  return invokeTyped<boolean>("auth_set_password", { password });
+  return invokeTyped<boolean>("auth_secret_set", { passphrase: password });
 }
 
 export function authVerifyPassword(password: string) {
-  return invokeTyped<boolean>("auth_verify_password", { password });
+  return invokeTyped<boolean>("auth_secret_verify", { passphrase: password });
 }

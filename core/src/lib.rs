@@ -1036,9 +1036,9 @@ pub fn run() {
             door_list_incoming,
             door_delete,
             door_repoint,
-            auth::auth_is_setup,
-            auth::auth_set_password,
-            auth::auth_verify_password
+            auth::auth_secret_is_setup,
+            auth::auth_secret_set,
+            auth::auth_secret_verify
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
