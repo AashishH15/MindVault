@@ -44,7 +44,7 @@ For a detailed breakdown of testing and linting commands, please refer to the `R
 ## How to Contribute
 
 ### Reporting Bugs
-If you find a bug, please search the existing issues first to avoid duplicates. If the issue is new, open a **Bug Report** and include:
+If you find a bug, please search the existing issues or ask in the [Discord Server](https://discord.gg/V8dmEXfvhs) first to avoid duplicates. If the issue is new, open a **Bug Report** and include:
 * Your OS and environment details.
 * Clear, step-by-step instructions to reproduce the bug.
 * Expected vs. actual behavior.
