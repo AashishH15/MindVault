@@ -8,6 +8,20 @@ MindVault does not just store personal memory as a huge number of text files rat
 
 > The goal is not to give an AI a bigger context window, but to give it a better-shaped one.
 
+## Table of Contents
+
+- [Architecture Flow](#architecture-flow)
+- [Getting Started](#getting-started)
+  - [Prerequisites](#prerequisites)
+  - [Install](#install)
+  - [Run the desktop app (Tauri)](#run-the-desktop-app-tauri)
+  - [Run the UI only (Vite dev server)](#run-the-ui-only-vite-dev-server)
+  - [Lint / typecheck](#lint--typecheck)
+  - [Rust checks (core)](#rust-checks-core)
+- [Before committing](#before-committing)
+- [Community](#community)
+- [License](#license)
+
 ## Architecture Flow
 
 ```mermaid
