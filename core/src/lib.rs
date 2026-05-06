@@ -990,10 +990,31 @@ fn node_update(input: NodeUpdateInput, state: tauri::State<'_, DbState>) -> IpcR
 fn node_touch(node_id: String, state: tauri::State<'_, DbState>) -> IpcResponse<bool> {
     into_ipc((|| {
         let conn = open_connection(&state.db_path)?;
+
+        let decay_json_str: String = conn
+            .query_row(
+                "SELECT decay FROM nodes WHERE id = ?1 AND deleted_at IS NULL;",
+                [&node_id],
+                |row| row.get(0),
+            )
+            .map_err(|err| format!("Failed reading decay for node {node_id}: {err}"))?;
+
+        let mut decay_obj: serde_json::Value =
+            serde_json::from_str(&decay_json_str).unwrap_or_else(|_| serde_json::json!({}));
+
+        let current_touches = decay_obj
+            .get("today_touches")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        decay_obj["today_touches"] = serde_json::json!(current_touches + 1);
+
+        let updated_json = serde_json::to_string(&decay_obj)
+            .map_err(|err| format!("Failed serializing decay for node {node_id}: {err}"))?;
+
         let affected = conn
             .execute(
-                "UPDATE nodes SET last_accessed = datetime('now') WHERE id = ?1 AND deleted_at IS NULL;",
-                [&node_id],
+                "UPDATE nodes SET last_accessed = datetime('now'), decay = ?2 WHERE id = ?1 AND deleted_at IS NULL;",
+                params![&node_id, &updated_json],
             )
             .map_err(|err| format!("Failed touching node: {err}"))?;
         Ok(affected > 0)
@@ -1017,62 +1038,56 @@ fn node_delete(node_id: String, state: tauri::State<'_, DbState>) -> IpcResponse
     })())
 }
 
+fn run_decay_refresh(db_path: &std::path::Path) -> Result<usize, String> {
+    let conn = open_connection(db_path)?;
+    let mut statement = conn
+        .prepare("SELECT id, last_accessed, decay FROM nodes WHERE deleted_at IS NULL;")
+        .map_err(|err| format!("Failed preparing decay refresh query: {err}"))?;
+
+    let rows: Vec<(String, String, String)> = statement
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+        .map_err(|err| format!("Failed querying nodes for decay: {err}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|err| format!("Failed reading decay rows: {err}"))?;
+
+    let mut updated_count: usize = 0;
+
+    for (id, last_accessed_str, decay_json_str) in &rows {
+        let last_accessed =
+            chrono::NaiveDateTime::parse_from_str(last_accessed_str, "%Y-%m-%d %H:%M:%S")
+                .map_err(|err| format!("Bad last_accessed for node {id}: {err}"))?;
+
+        let decay_obj: serde_json::Value =
+            serde_json::from_str(decay_json_str).unwrap_or_else(|_| serde_json::json!({}));
+
+        let mut decay_obj = decay::calculate_rollover(decay_obj);
+
+        let rate = decay_obj
+            .get("rate")
+            .and_then(|v| v.as_str())
+            .unwrap_or("standard");
+
+        let new_score = decay::calculate_score(last_accessed, rate);
+        decay_obj["score"] = serde_json::json!(new_score);
+
+        let updated_json = serde_json::to_string(&decay_obj)
+            .map_err(|err| format!("Failed serializing decay for node {id}: {err}"))?;
+
+        conn.execute(
+            "UPDATE nodes SET decay = ?2, updated_at = datetime('now') WHERE id = ?1 AND deleted_at IS NULL;",
+            params![id, updated_json],
+        )
+        .map_err(|err| format!("Failed updating decay for node {id}: {err}"))?;
+
+        updated_count += 1;
+    }
+
+    Ok(updated_count)
+}
+
 #[tauri::command]
 fn decay_refresh_all(state: tauri::State<'_, DbState>) -> IpcResponse<usize> {
-    into_ipc((|| {
-        let conn = open_connection(&state.db_path)?;
-        let mut statement = conn
-            .prepare("SELECT id, last_accessed, decay FROM nodes WHERE deleted_at IS NULL;")
-            .map_err(|err| format!("Failed preparing decay refresh query: {err}"))?;
-
-        let rows: Vec<(String, String, String)> = statement
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
-            .map_err(|err| format!("Failed querying nodes for decay: {err}"))?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|err| format!("Failed reading decay rows: {err}"))?;
-
-        let mut updated_count: usize = 0;
-
-        for (id, last_accessed_str, decay_json_str) in &rows {
-            let last_accessed =
-                chrono::NaiveDateTime::parse_from_str(last_accessed_str, "%Y-%m-%d %H:%M:%S")
-                    .map_err(|err| format!("Bad last_accessed for node {id}: {err}"))?;
-
-            let mut decay_obj: serde_json::Value =
-                serde_json::from_str(decay_json_str).unwrap_or_else(|_| serde_json::json!({}));
-
-            let rate = decay_obj
-                .get("rate")
-                .and_then(|v| v.as_str())
-                .unwrap_or("standard");
-
-            let old_score = decay_obj
-                .get("score")
-                .and_then(|v| v.as_f64())
-                .unwrap_or(1.0);
-
-            let new_score = decay::calculate_score(last_accessed, rate);
-
-            if (new_score - old_score).abs() <= 0.01 {
-                continue;
-            }
-
-            decay_obj["score"] = serde_json::json!(new_score);
-
-            let updated_json = serde_json::to_string(&decay_obj)
-                .map_err(|err| format!("Failed serializing decay for node {id}: {err}"))?;
-
-            conn.execute(
-                "UPDATE nodes SET decay = ?2, updated_at = datetime('now') WHERE id = ?1 AND deleted_at IS NULL;",
-                params![id, updated_json],
-            )
-            .map_err(|err| format!("Failed updating decay for node {id}: {err}"))?;
-
-            updated_count += 1;
-        }
-
-        Ok(updated_count)
-    })())
+    into_ipc(run_decay_refresh(&state.db_path))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1085,7 +1100,25 @@ pub fn run() {
             run_migrations(&mut conn)
                 .map_err(|err| -> Box<dyn std::error::Error> { err.into() })?;
             run_seed_data(&mut conn).map_err(|err| -> Box<dyn std::error::Error> { err.into() })?;
-            app.manage(DbState { db_path });
+            app.manage(DbState {
+                db_path: db_path.clone(),
+            });
+
+            let bg_path = db_path;
+            std::thread::spawn(move || loop {
+                std::thread::sleep(std::time::Duration::from_secs(24 * 60 * 60));
+                match run_decay_refresh(&bg_path) {
+                    Ok(count) => {
+                        if count > 0 {
+                            eprintln!("[decay] refreshed {count} node(s)");
+                        }
+                    }
+                    Err(err) => {
+                        eprintln!("[decay] background refresh failed: {err}");
+                    }
+                }
+            });
+
             Ok(())
         })
         .plugin(tauri_plugin_opener::init())
