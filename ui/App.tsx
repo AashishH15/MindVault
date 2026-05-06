@@ -1,11 +1,15 @@
-import { useState, type MouseEvent } from "react";
+import { useEffect, useState, type MouseEvent } from "react";
 import ErrorBoundary from "./components/ErrorBoundary";
 import NodeEditor from "./components/NodeEditor";
 import NodeList from "./components/NodeList";
 import VaultSidebar from "./components/VaultSidebar";
+import { refreshAllDecayScores } from "./services/nodes";
 import "./App.css";
 
 function App() {
+  useEffect(() => {
+    void refreshAllDecayScores().catch(() => {});
+  }, []);
   const [omniboxText, setOmniboxText] = useState<string>("");
   const [selectedVaultId, setSelectedVaultId] = useState<string | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);

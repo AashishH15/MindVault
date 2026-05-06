@@ -138,3 +138,7 @@ export function authSetPassword(password: string) {
 export function authVerifyPassword(password: string) {
   return invokeTyped<boolean>("auth_secret_verify", { passphrase: password });
 }
+
+export function decayRefreshAll() {
+  return invokeTyped<number>("decay_refresh_all");
+}
