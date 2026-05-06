@@ -72,3 +72,56 @@ flowchart TD
     MemAgent -->|"Proposes Changeset"| Diff
     Diff -->|"User Accepts -> New Snapshot"| Storage
 ```
+
+## Getting Started
+
+### Prerequisites
+
+- **Node.js**: 24+
+- **Rust**: stable toolchain (install via `rustup`)
+- **System deps (Linux only)**: you need WebKitGTK + a few build libs.
+
+Example for Ubuntu/Debian:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y \
+  libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev \
+  libayatana-appindicator3-dev librsvg2-dev patchelf
+```
+
+### Install
+
+From the repo root:
+
+```bash
+npm ci
+```
+
+### Run the desktop app (Tauri)
+
+```bash
+npm run tauri dev
+```
+
+### Run the UI only (Vite dev server)
+
+```bash
+npm run dev
+```
+
+### Lint / typecheck
+
+```bash
+npm run lint
+npx tsc --noEmit
+```
+
+### Rust checks (core)
+
+```bash
+cd core
+cargo fmt
+cargo clippy
+cargo test
+```
