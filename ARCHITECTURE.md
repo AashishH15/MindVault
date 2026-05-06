@@ -427,4 +427,25 @@ When you're implementing something and unsure which pattern to use:
 | Handle an error | `AppError` variant with `?` — never `unwrap()` |
 | Expose data to the frontend from an LLM | Return `{ response, cited_nodes }` only — never the assembled prompt |
 
+---
+
+## Before committing (required)
+
+Run the project preflight gate before committing. It’s cross-platform and matches CI.
+
+### Windows (PowerShell) / macOS / Linux (bash)
+
+```bash
+# Auto-fix formatting + run full checks (recommended)
+npm run preflight:fix
+
+git add -A
+git commit -m "your message"
+```
+
+Checks only (no auto-fixes):
+
+```bash
+npm run preflight
+```
 If your situation isn't covered here, open a discussion before implementing. It's much easier to course-correct a design than a merged PR.

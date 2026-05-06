@@ -62,13 +62,35 @@ To ensure the codebase remains fast, secure, and maintainable, please adhere to 
 * **Synchronous SQLite:** We use synchronous `rusqlite` wrapped in Tauri's async commands to avoid locking issues.
 * **Strict Parameter Binding:** All database queries *must* use strict positional parameters (e.g., `?1`, `?2`) to prevent SQL injection.
 * **IPC Types:** Any data structure passed to the frontend must be defined in `ipc_types.rs` with `ts-rs` macros to auto-generate TypeScript definitions.
-* **Format & Lint:** Before committing, always run `cargo fmt` and `cargo clippy -- -D warnings`.
+* **Format & Lint:** Use the preflight gate below before committing.
 
 ### React / Frontend (`/ui`)
 * **TypeScript:** Strict TypeScript is enforced. Do not use `any` types. Ensure all backend responses are strongly typed using the generated interfaces.
 * **Styling:** We use standard CSS (`App.css`). **Do not use inline styles.** Adhere to the established dark, minimalist aesthetic.
 * **State Management:** Keep state as localized as possible. Only lift state globally (e.g., `App.tsx`) when absolutely necessary (like the `isRedactedUnlocked` auth state).
 * **Linting:** Ensure your code passes `npm run lint` and `npx tsc --noEmit` before opening a PR.
+
+---
+
+## Before committing (required)
+
+Run the project preflight gate before committing. It’s cross-platform and matches CI.
+
+### Windows (PowerShell) / macOS / Linux (bash)
+
+```bash
+# Auto-fix formatting + run full checks (recommended)
+npm run preflight:fix
+
+git add -A
+git commit -m "your message"
+```
+
+Checks only (no auto-fixes):
+
+```bash
+npm run preflight
+```
 
 ---
 

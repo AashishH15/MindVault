@@ -13,7 +13,9 @@
     "tauri": "tauri",
     "prepare": "husky",
     "lint": "eslint .",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "preflight": "node scripts/preflight.mjs",
+    "preflight:fix": "node scripts/preflight.mjs --fix"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

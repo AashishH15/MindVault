@@ -126,6 +126,27 @@ cargo clippy
 cargo test
 ```
 
+## Before committing
+
+MindVault uses a single cross-platform preflight gate that matches CI.
+
+### Windows (PowerShell) / macOS / Linux (bash) 
+
+```bash
+# Auto-fix formatting first (recommended)
+npm run preflight:fix
+
+# Then commit
+git add -A
+git commit -m "your message"
+```
+
+If you want checks only (no auto-fixes), run:
+
+```bash
+npm run preflight
+```
+
 ## Community
 Join our [Discord Server](https://discord.gg/V8dmEXfvhs) to discuss features, get help with local LLM setups, report bugs, and chat with other MindVault contributors!
 
