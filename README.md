@@ -162,7 +162,7 @@ npm run preflight
 ```
 
 ## Community
-Join our [Discord Server](https://discord.gg/V8dmEXfvhs) to discuss features, get help with local LLM setups, report bugs, and chat with other MindVault contributors!
+Join our [Discord Server](https://discord.gg/UYhqRHbH4M) to discuss features, get help with local LLM setups, report bugs, and chat with other MindVault contributors!
 
 ## License
 This project is licensed under the AGPLv3 License - see the LICENSE file for details.
