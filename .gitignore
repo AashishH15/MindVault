@@ -46,5 +46,5 @@ yarn.lock
 pnpm-lock.yaml
 
 Concepts/
-ARCHITECTURE.md
 cursorrules
+ARCHITECTURE_RULES.md
