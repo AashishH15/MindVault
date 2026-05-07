@@ -20,6 +20,7 @@ type VaultSidebarProps = {
   onSelectNode: (nodeId: string) => void;
   onVaultCreated: (vaultId: string) => void;
   onVaultDeleted: (vaultId: string) => void;
+  onOpenDashboard: () => void;
   isRedactedUnlocked: boolean;
   setIsRedactedUnlocked: (value: boolean) => void;
 };
@@ -31,6 +32,7 @@ function VaultSidebar({
   onSelectNode,
   onVaultCreated,
   onVaultDeleted,
+  onOpenDashboard,
   isRedactedUnlocked,
   setIsRedactedUnlocked,
 }: VaultSidebarProps) {
@@ -402,6 +404,9 @@ function VaultSidebar({
           New Vault
         </button>
       </div>
+      <button type="button" className="dashboard-trigger" onClick={onOpenDashboard}>
+        🧠 Active Memory
+      </button>
       <input
         type="search"
         className="vault-search"

@@ -1,48 +1,76 @@
-use chrono::NaiveDateTime;
+// MindVault — Usage-Relative Priority (URP) Decay System
+//
+// Nodes do not decay due to the passage of real-world time.
+// A closed app is a frozen system — no state changes, no decay.
+// "MindVault Time" only advances when the user actively uses the app
+// and generates touches on nodes.
+//
+// Vault-Relative Time: each vault has its own independent timeline.
+// If vault A is active but vault B has no touches, vault B's nodes
+// remain frozen — their access_history does not shift forward.
 
-fn half_life(rate: &str) -> f64 {
+/// Maximum score a decay rate can achieve.
+fn max_score(rate: &str) -> f64 {
     match rate {
-        "fast" => 3.0,
-        "slow" => 30.0,
+        "pinned" => 1.0,
+        "slow" => 1.0,
+        "fast" => 0.4,
         // "standard" and any unrecognized rate
-        _ => 14.0,
+        _ => 0.8,
     }
 }
 
-/// Exponential decay score based on time since last access.
-/// Returns a value clamped to [0.0, 1.0].
-/// Pinned nodes always return 1.0.
-pub fn calculate_score(last_accessed: NaiveDateTime, rate: &str) -> f64 {
+/// Calculate the Usage-Relative Priority score for a node.
+///
+/// Score is based entirely on usage frequency during active sessions.
+/// Real-world time does not affect this calculation.
+///
+/// Formula:
+///   if pinned → 1.0
+///   base = (access_count_30active / 10.0).clamp(0.1, 1.0)
+///   link_bonus = (link_count * 0.05).clamp(0.0, 0.2)
+///   score = (base + link_bonus).min(rate.max_score())
+pub fn calculate_score(access_count_30active: u64, link_count: u64, rate: &str) -> f64 {
     if rate == "pinned" {
         return 1.0;
     }
 
-    let now = chrono::Utc::now().naive_utc();
-    let elapsed_days = (now - last_accessed).num_seconds() as f64 / 86_400.0;
+    let base = (access_count_30active as f64 / 10.0).clamp(0.1, 1.0);
+    let link_bonus = (link_count as f64 * 0.05).clamp(0.0, 0.2);
 
-    if elapsed_days < 0.0 {
-        return 1.0;
-    }
-
-    let hl = half_life(rate);
-    let lambda = f64::ln(2.0) / hl;
-    let score = f64::exp(-lambda * elapsed_days);
-
-    score.clamp(0.0, 1.0)
+    (base + link_bonus).min(max_score(rate))
 }
 
 const MAX_HISTORY_LEN: usize = 90;
 
-/// Roll over daily access counters.
-/// Pushes `today_touches` onto the front of `access_history`,
-/// caps the history at 90 entries, resets `today_touches` to 0,
-/// and recomputes `access_count_30d` / `access_count_90d`.
-pub fn calculate_rollover(mut decay_json: serde_json::Value) -> serde_json::Value {
+/// Roll over daily access counters with vault-relative time.
+///
+/// `vault_is_active` — true if ANY node in this vault had touches today.
+///
+/// If `vault_is_active == false`, the vault is frozen: reset `today_touches`
+/// to 0 but do NOT push anything to `access_history`. The node's history
+/// and scores remain unchanged (winter-break / inactive-vault protection).
+///
+/// If `vault_is_active == true`, time is ticking for this vault: push
+/// `today_touches` (even if 0) to the history array. This means untouched
+/// nodes in an active vault naturally lose priority relative to their
+/// siblings that ARE being accessed.
+pub fn calculate_rollover(
+    mut decay_json: serde_json::Value,
+    vault_is_active: bool,
+) -> serde_json::Value {
     let today = decay_json
         .get("today_touches")
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
 
+    // Vault frozen — reset today_touches but do not advance history.
+    if !vault_is_active {
+        decay_json["today_touches"] = serde_json::json!(0);
+        return decay_json;
+    }
+
+    // Vault is active — time is ticking. Push today_touches (even 0).
     let mut history: Vec<u64> = decay_json
         .get("access_history")
         .and_then(|v| v.as_array())
@@ -57,8 +85,8 @@ pub fn calculate_rollover(mut decay_json: serde_json::Value) -> serde_json::Valu
 
     decay_json["today_touches"] = serde_json::json!(0);
     decay_json["access_history"] = serde_json::json!(history);
-    decay_json["access_count_30d"] = serde_json::json!(access_30d);
-    decay_json["access_count_90d"] = serde_json::json!(access_90d);
+    decay_json["access_count_30active"] = serde_json::json!(access_30d);
+    decay_json["access_count_90active"] = serde_json::json!(access_90d);
 
     decay_json
 }
@@ -67,30 +95,48 @@ pub fn calculate_rollover(mut decay_json: serde_json::Value) -> serde_json::Valu
 mod tests {
     use super::*;
 
+    // ── Score tests ──────────────────────────────────────────
+
     #[test]
     fn pinned_always_returns_one() {
-        let ts = chrono::Utc::now().naive_utc() - chrono::Duration::days(365);
-        assert!((calculate_score(ts, "pinned") - 1.0).abs() < f64::EPSILON);
+        assert!((calculate_score(0, 0, "pinned") - 1.0).abs() < f64::EPSILON);
+        assert!((calculate_score(100, 0, "pinned") - 1.0).abs() < f64::EPSILON);
     }
 
     #[test]
-    fn standard_half_life_at_14_days() {
-        let ts = chrono::Utc::now().naive_utc() - chrono::Duration::days(14);
-        let score = calculate_score(ts, "standard");
-        assert!((score - 0.5).abs() < 0.02, "expected ~0.5, got {score}");
+    fn zero_access_returns_floor() {
+        let score = calculate_score(0, 0, "standard");
+        assert!(
+            (score - 0.1).abs() < f64::EPSILON,
+            "expected 0.1, got {score}"
+        );
     }
 
     #[test]
-    fn future_timestamp_returns_one() {
-        let ts = chrono::Utc::now().naive_utc() + chrono::Duration::hours(2);
-        assert!((calculate_score(ts, "standard") - 1.0).abs() < f64::EPSILON);
+    fn high_access_caps_at_max_score() {
+        let standard = calculate_score(50, 0, "standard");
+        assert!(
+            (standard - 0.8).abs() < f64::EPSILON,
+            "standard max should be 0.8, got {standard}"
+        );
+
+        let slow = calculate_score(50, 0, "slow");
+        assert!(
+            (slow - 1.0).abs() < f64::EPSILON,
+            "slow max should be 1.0, got {slow}"
+        );
+
+        let fast = calculate_score(50, 0, "fast");
+        assert!(
+            (fast - 0.4).abs() < f64::EPSILON,
+            "fast max should be 0.4, got {fast}"
+        );
     }
 
     #[test]
-    fn fast_decays_quicker_than_slow() {
-        let ts = chrono::Utc::now().naive_utc() - chrono::Duration::days(7);
-        let fast = calculate_score(ts, "fast");
-        let slow = calculate_score(ts, "slow");
+    fn fast_scores_lower_than_slow_same_usage() {
+        let fast = calculate_score(5, 0, "fast");
+        let slow = calculate_score(5, 0, "slow");
         assert!(
             fast < slow,
             "fast ({fast}) should be less than slow ({slow})"
@@ -98,12 +144,38 @@ mod tests {
     }
 
     #[test]
-    fn rollover_pushes_today_to_history() {
+    fn link_bonus_adds_structural_signal() {
+        let without = calculate_score(3, 0, "slow");
+        let with = calculate_score(3, 4, "slow");
+        assert!(
+            with > without,
+            "with links ({with}) should be greater than without ({without})"
+        );
+        assert!(
+            (with - without - 0.2).abs() < f64::EPSILON,
+            "link bonus should be 0.2, got {}",
+            with - without
+        );
+    }
+
+    #[test]
+    fn link_bonus_capped_at_0_2() {
+        let score = calculate_score(3, 100, "slow");
+        assert!(
+            (score - 0.5).abs() < f64::EPSILON,
+            "expected 0.5, got {score}"
+        );
+    }
+
+    // ── Rollover tests (vault active) ───────────────────────
+
+    #[test]
+    fn rollover_active_vault_pushes_today() {
         let input = serde_json::json!({
             "today_touches": 5,
             "access_history": [3, 2, 1]
         });
-        let result = calculate_rollover(input);
+        let result = calculate_rollover(input, true);
         assert_eq!(result["today_touches"], 0);
         let history = result["access_history"].as_array().unwrap_or_else(|| {
             panic!("access_history missing");
@@ -114,46 +186,98 @@ mod tests {
     }
 
     #[test]
-    fn rollover_computes_30d_and_90d_sums() {
-        let mut history = vec![1u64; 40];
-        history.truncate(40);
+    fn rollover_active_vault_pushes_zero_for_untouched_node() {
+        // Node in an active vault that wasn't touched itself — 0 gets pushed
+        let input = serde_json::json!({
+            "today_touches": 0,
+            "access_history": [5, 3]
+        });
+        let result = calculate_rollover(input, true);
+        assert_eq!(result["today_touches"], 0);
+        let history = result["access_history"].as_array().unwrap_or_else(|| {
+            panic!("access_history missing");
+        });
+        assert_eq!(history.len(), 3, "0 should be pushed");
+        assert_eq!(history[0], 0, "first entry should be 0");
+        assert_eq!(history[1], 5);
+    }
+
+    #[test]
+    fn rollover_active_vault_computes_30d_and_90d_sums() {
+        let history = vec![1u64; 40];
         let input = serde_json::json!({
             "today_touches": 2,
             "access_history": history
         });
-        let result = calculate_rollover(input);
-        // history is now [2, 1*40] = 41 items
-        // 30d sum = 2 + 29*1 = 31
-        assert_eq!(result["access_count_30d"], 31);
-        // 90d sum = 2 + 40*1 = 42
-        assert_eq!(result["access_count_90d"], 42);
+        let result = calculate_rollover(input, true);
+        assert_eq!(result["access_count_30active"], 31);
+        // 90 active-session sum = 2 + 40*1 = 42
+        assert_eq!(result["access_count_90active"], 42);
     }
 
     #[test]
-    fn rollover_caps_history_at_90() {
+    fn rollover_active_vault_caps_history_at_90() {
         let history = vec![1u64; 95];
         let input = serde_json::json!({
             "today_touches": 1,
             "access_history": history
         });
-        let result = calculate_rollover(input);
+        let result = calculate_rollover(input, true);
         let arr = result["access_history"].as_array().unwrap_or_else(|| {
             panic!("access_history missing");
         });
         assert_eq!(arr.len(), 90);
     }
 
+    // ── Rollover tests (vault frozen) ───────────────────────
+
     #[test]
-    fn rollover_handles_empty_defaults() {
-        let input = serde_json::json!({});
-        let result = calculate_rollover(input);
+    fn rollover_frozen_vault_does_not_shift_history() {
+        let input = serde_json::json!({
+            "today_touches": 3,
+            "access_history": [5, 3],
+            "access_count_30active": 8,
+            "access_count_90active": 8
+        });
+        let result = calculate_rollover(input, false);
+        // today_touches is reset but history is NOT shifted
         assert_eq!(result["today_touches"], 0);
-        assert_eq!(result["access_count_30d"], 0);
-        assert_eq!(result["access_count_90d"], 0);
-        let arr = result["access_history"].as_array().unwrap_or_else(|| {
+        let history = result["access_history"].as_array().unwrap_or_else(|| {
             panic!("access_history missing");
         });
-        assert_eq!(arr.len(), 1);
-        assert_eq!(arr[0], 0);
+        assert_eq!(history.len(), 2, "history should be unchanged");
+        assert_eq!(
+            result["access_count_30active"], 8,
+            "30active should be unchanged"
+        );
+        assert_eq!(
+            result["access_count_90active"], 8,
+            "90active should be unchanged"
+        );
+    }
+
+    #[test]
+    fn rollover_frozen_vault_resets_today_touches() {
+        let input = serde_json::json!({
+            "today_touches": 7
+        });
+        let result = calculate_rollover(input, false);
+        assert_eq!(result["today_touches"], 0);
+        assert!(
+            result.get("access_history").is_none(),
+            "should not create history on frozen vault"
+        );
+    }
+
+    #[test]
+    fn rollover_active_vault_handles_empty_defaults() {
+        let input = serde_json::json!({});
+        let result = calculate_rollover(input, true);
+        assert_eq!(result["today_touches"], 0);
+        let history = result["access_history"].as_array().unwrap_or_else(|| {
+            panic!("access_history missing");
+        });
+        assert_eq!(history.len(), 1, "should push 0 for active vault");
+        assert_eq!(history[0], 0);
     }
 }

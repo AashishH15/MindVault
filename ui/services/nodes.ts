@@ -1,4 +1,5 @@
 import {
+  decayOptimizeAll,
   decayRefreshAll,
   nodeCreate,
   nodeDelete,
@@ -42,4 +43,8 @@ export async function touchNode(nodeId: string): Promise<boolean> {
 
 export async function refreshAllDecayScores(): Promise<number> {
   return unwrapIpcResult(decayRefreshAll());
+}
+
+export async function optimizeAllDecayRates(): Promise<number> {
+  return unwrapIpcResult(decayOptimizeAll());
 }

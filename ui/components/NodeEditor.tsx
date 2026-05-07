@@ -1,5 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { deleteNode, getAllNodes, getNode, touchNode, updateNode } from "../services/nodes";
+import {
+  deleteNode,
+  getAllNodes,
+  getNode,
+  refreshAllDecayScores,
+  touchNode,
+  updateNode,
+} from "../services/nodes";
 import type { Backlink, Door, Node, Tag, Vault } from "../ipc";
 import { AppError } from "../services/ipcResult";
 import { listVaults, resolveVaultPath } from "../services/vaults";
@@ -14,6 +21,7 @@ import {
 import { isAuthSetup, setMasterPassword, verifyMasterPassword } from "../services/auth";
 import { getEffectivePrivacy, getPrivacyRank } from "../utils/privacy";
 import { PrivacyBadge } from "./PrivacyBadge";
+import DecayBar from "./DecayBar";
 
 type NodeEditorProps = {
   selectedNodeId: string | null;
@@ -55,6 +63,7 @@ function NodeEditor({
   const [breadcrumbPath, setBreadcrumbPath] = useState("");
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
   const [editDecayRate, setEditDecayRate] = useState("standard");
+  const [editFrozen, setEditFrozen] = useState(false);
   const [status, setStatus] = useState<string>("");
   const saveRunIdRef = useRef(0);
   const saveStatusTimeoutRef = useRef<number | null>(null);
@@ -251,6 +260,11 @@ function NodeEditor({
             ? String(parsed.rate)
             : "standard"
         );
+        setEditFrozen(
+          parsed && typeof parsed === "object" && "frozen" in parsed
+            ? parsed.frozen === true
+            : false
+        );
       } catch {
         setEditDecayRate("standard");
       }
@@ -274,10 +288,14 @@ function NodeEditor({
 
     const currentPrivacy = node.privacyTier ?? "open";
     let currentDecayRate = "standard";
+    let currentFrozen = false;
     try {
       const parsed = typeof node.decay === "string" ? JSON.parse(node.decay) : node.decay;
       if (parsed && typeof parsed === "object" && "rate" in parsed) {
         currentDecayRate = String(parsed.rate);
+      }
+      if (parsed && typeof parsed === "object" && "frozen" in parsed) {
+        currentFrozen = parsed.frozen === true;
       }
     } catch {
       // keep default
@@ -287,7 +305,8 @@ function NodeEditor({
       editSummary !== (node.summary ?? "") ||
       editDetail !== (node.detail ?? "") ||
       editPrivacy !== currentPrivacy ||
-      editDecayRate !== currentDecayRate;
+      editDecayRate !== currentDecayRate ||
+      editFrozen !== currentFrozen;
 
     if (!hasChanges) {
       return;
@@ -321,12 +340,20 @@ function NodeEditor({
               })(),
               rate: editDecayRate,
               pinned: editDecayRate === "pinned",
+              frozen: editFrozen,
             }),
           });
           if (runId !== saveRunIdRef.current) {
             return;
           }
           setNode(updated);
+          if (editDecayRate !== currentDecayRate) {
+            await refreshAllDecayScores();
+            const freshNode = await getNode(selectedNodeId);
+            if (freshNode && runId === saveRunIdRef.current) {
+              setNode(freshNode);
+            }
+          }
           setSaveStatus("saved");
           onSaveSuccess();
           if (saveStatusTimeoutRef.current !== null) {
@@ -358,6 +385,7 @@ function NodeEditor({
   }, [
     editDecayRate,
     editDetail,
+    editFrozen,
     editPrivacy,
     editSummary,
     editTitle,
@@ -719,13 +747,25 @@ function NodeEditor({
             </label>
             {!isLocked && (
               <label className="editor-decay">
-                <span>Decay: {decayScore !== null ? decayScore.toFixed(2) : "1.00"}</span>
+                <DecayBar score={decayScore} />
                 <select value={editDecayRate} onChange={(e) => setEditDecayRate(e.target.value)}>
-                  <option value="slow">Slow</option>
                   <option value="standard">Standard</option>
+                  <option value="slow">Slow</option>
                   <option value="fast">Fast</option>
                   <option value="pinned">Pinned</option>
                 </select>
+                <button
+                  type="button"
+                  className={`freeze-toggle ${editFrozen ? "frozen" : ""}`}
+                  onClick={() => setEditFrozen((prev) => !prev)}
+                  title={
+                    editFrozen
+                      ? "Unfreeze — allow auto-optimize"
+                      : "Freeze — protect from auto-optimize"
+                  }
+                >
+                  ❄️
+                </button>
               </label>
             )}
           </div>

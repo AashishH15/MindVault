@@ -857,7 +857,7 @@ fn node_create(input: NodeCreateInput, state: tauri::State<'_, DbState>) -> IpcR
         let id = generate_id(&tx, "node")?;
         let node_type = input.node_type.unwrap_or_else(|| "concept".to_string());
         let decay = input.decay.unwrap_or_else(|| {
-            "{\"score\":1.0,\"rate\":\"standard\",\"pinned\":false,\"access_count_30d\":0,\"access_count_90d\":0,\"age_days\":0,\"auto_trim_threshold\":0.25}".to_string()
+            "{\"score\":1.0,\"rate\":\"standard\",\"pinned\":false,\"access_count_30active\":0,\"access_count_90active\":0,\"auto_trim_threshold\":0.25}".to_string()
         });
         let meta = input.meta.unwrap_or_else(|| "{}".to_string());
 
@@ -1041,7 +1041,7 @@ fn node_delete(node_id: String, state: tauri::State<'_, DbState>) -> IpcResponse
 fn run_decay_refresh(db_path: &std::path::Path) -> Result<usize, String> {
     let conn = open_connection(db_path)?;
     let mut statement = conn
-        .prepare("SELECT id, last_accessed, decay FROM nodes WHERE deleted_at IS NULL;")
+        .prepare("SELECT id, vault_id, decay FROM nodes WHERE deleted_at IS NULL;")
         .map_err(|err| format!("Failed preparing decay refresh query: {err}"))?;
 
     let rows: Vec<(String, String, String)> = statement
@@ -1050,24 +1050,46 @@ fn run_decay_refresh(db_path: &std::path::Path) -> Result<usize, String> {
         .collect::<Result<Vec<_>, _>>()
         .map_err(|err| format!("Failed reading decay rows: {err}"))?;
 
+    // Pass 1: Determine which vaults had activity today.
+    let mut active_vaults = std::collections::HashSet::new();
+    for (_, vault_id, decay_json_str) in &rows {
+        let decay_obj: serde_json::Value =
+            serde_json::from_str(decay_json_str).unwrap_or_else(|_| serde_json::json!({}));
+        let today_touches = decay_obj
+            .get("today_touches")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        if today_touches > 0 {
+            active_vaults.insert(vault_id.clone());
+        }
+    }
+
+    // Pass 2: Roll over and recalculate scores with vault-relative context.
     let mut updated_count: usize = 0;
 
-    for (id, last_accessed_str, decay_json_str) in &rows {
-        let last_accessed =
-            chrono::NaiveDateTime::parse_from_str(last_accessed_str, "%Y-%m-%d %H:%M:%S")
-                .map_err(|err| format!("Bad last_accessed for node {id}: {err}"))?;
-
+    for (id, vault_id, decay_json_str) in &rows {
         let decay_obj: serde_json::Value =
             serde_json::from_str(decay_json_str).unwrap_or_else(|_| serde_json::json!({}));
 
-        let mut decay_obj = decay::calculate_rollover(decay_obj);
+        let vault_is_active = active_vaults.contains(vault_id);
+        let mut decay_obj = decay::calculate_rollover(decay_obj, vault_is_active);
 
         let rate = decay_obj
             .get("rate")
             .and_then(|v| v.as_str())
             .unwrap_or("standard");
 
-        let new_score = decay::calculate_score(last_accessed, rate);
+        let access_30d = decay_obj
+            .get("access_count_30active")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+
+        let link_count = decay_obj
+            .get("link_count")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+
+        let new_score = decay::calculate_score(access_30d, link_count, rate);
         decay_obj["score"] = serde_json::json!(new_score);
 
         let updated_json = serde_json::to_string(&decay_obj)
@@ -1088,6 +1110,79 @@ fn run_decay_refresh(db_path: &std::path::Path) -> Result<usize, String> {
 #[tauri::command]
 fn decay_refresh_all(state: tauri::State<'_, DbState>) -> IpcResponse<usize> {
     into_ipc(run_decay_refresh(&state.db_path))
+}
+
+#[tauri::command]
+fn decay_optimize_all(state: tauri::State<'_, DbState>) -> IpcResponse<usize> {
+    into_ipc((|| {
+        let conn = open_connection(&state.db_path)?;
+        let mut statement = conn
+            .prepare("SELECT id, decay FROM nodes WHERE deleted_at IS NULL;")
+            .map_err(|err| format!("Failed preparing optimize query: {err}"))?;
+
+        let rows: Vec<(String, String)> = statement
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .map_err(|err| format!("Failed querying nodes for optimize: {err}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|err| format!("Failed reading optimize rows: {err}"))?;
+
+        let mut updated_count: usize = 0;
+
+        for (id, decay_json_str) in &rows {
+            let mut decay_obj: serde_json::Value =
+                serde_json::from_str(decay_json_str).unwrap_or_else(|_| serde_json::json!({}));
+
+            let current_rate = decay_obj
+                .get("rate")
+                .and_then(|v| v.as_str())
+                .unwrap_or("standard");
+
+            if current_rate == "pinned" {
+                continue;
+            }
+
+            let frozen = decay_obj
+                .get("frozen")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            if frozen {
+                continue;
+            }
+
+            let count_30d = decay_obj
+                .get("access_count_30active")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+
+            let new_rate = if count_30d >= 7 {
+                "slow"
+            } else if count_30d <= 2 {
+                "fast"
+            } else {
+                "standard"
+            };
+
+            if new_rate == current_rate {
+                continue;
+            }
+
+            decay_obj["rate"] = serde_json::json!(new_rate);
+            decay_obj["pinned"] = serde_json::json!(false);
+
+            let updated_json = serde_json::to_string(&decay_obj)
+                .map_err(|err| format!("Failed serializing optimize for node {id}: {err}"))?;
+
+            conn.execute(
+                "UPDATE nodes SET decay = ?2, updated_at = datetime('now') WHERE id = ?1 AND deleted_at IS NULL;",
+                params![id, updated_json],
+            )
+            .map_err(|err| format!("Failed optimizing node {id}: {err}"))?;
+
+            updated_count += 1;
+        }
+
+        Ok(updated_count)
+    })())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1148,7 +1243,8 @@ pub fn run() {
             auth::auth_secret_is_setup,
             auth::auth_secret_set,
             auth::auth_secret_verify,
-            decay_refresh_all
+            decay_refresh_all,
+            decay_optimize_all
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|err| {

@@ -142,3 +142,7 @@ export function authVerifyPassword(password: string) {
 export function decayRefreshAll() {
   return invokeTyped<number>("decay_refresh_all");
 }
+
+export function decayOptimizeAll() {
+  return invokeTyped<number>("decay_optimize_all");
+}
