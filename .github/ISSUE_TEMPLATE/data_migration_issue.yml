@@ -34,7 +34,7 @@ body:
         Old → new version (if upgrade):
         schema_migrations rows (if available):
     validations:
-      required: true
+      required: false
 
   - type: textarea
     id: proposal
