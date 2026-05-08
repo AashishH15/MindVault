@@ -1,0 +1,38 @@
+name: "📚 Documentation improvement"
+description: "Report unclear/outdated docs or propose spec/rules updates"
+title: "[Docs]: "
+labels: ["documentation"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is unclear, outdated, or missing?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: What should the doc/spec say?
+    validations:
+      required: true
+
+  - type: textarea
+    id: rationale
+    attributes:
+      label: Rationale
+      description: Why does this matter (security, onboarding, contributor clarity)?
+    validations:
+      required: false
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      placeholder: |
+        - [ ] Accurate and consistent with current behavior
+        - [ ] Rules are actionable and unambiguous
+    validations:
+      required: true

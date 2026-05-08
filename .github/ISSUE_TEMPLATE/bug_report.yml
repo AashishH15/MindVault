@@ -1,0 +1,100 @@
+name: "🐛 Bug Report"
+description: "Report a reproducible bug in MindVault"
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve MindVault.
+
+        **Security note:** If this involves bypassing privacy tiers, IPC exploits, or credential exposure, use the **Report a security vulnerability** link instead of filing a public issue.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Describe what’s wrong in 1–3 sentences.
+      placeholder: "When I repoint a Door, the incoming backlinks list still shows the old target..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Observed vs expected behavior. Include screenshots/logs if applicable.
+      placeholder: |
+        Observed:
+        Expected:
+        Logs/screenshots:
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction steps
+      description: Numbered steps that reliably reproduce the bug.
+      placeholder: |
+        1. Go to '...'
+        2. Click on '...'
+        3. Scroll down to '...'
+        4. See error
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: OS
+      options:
+        - Windows
+        - macOS
+        - Linux
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: MindVault version / commit
+      placeholder: "e.g. main @ <short sha>"
+    validations:
+      required: false
+
+  - type: input
+    id: node
+    attributes:
+      label: Node version
+      placeholder: "node -v"
+    validations:
+      required: false
+
+  - type: input
+    id: rust
+    attributes:
+      label: Rust version
+      placeholder: "rustc -V"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: llm_provider
+    attributes:
+      label: Local LLM provider (if relevant)
+      options:
+        - Not applicable
+        - Ollama
+        - LM Studio
+    validations:
+      required: true
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact / severity
+      description: What breaks? Any data-loss or privacy implications?
+    validations:
+      required: false

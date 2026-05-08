@@ -1,0 +1,67 @@
+name: "💾 Data / Migration issue"
+description: "Schema, migration, trigger, or data-integrity problems"
+title: "[Data]: "
+labels: ["data", "migration"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Describe the data/migration issue in 1–3 sentences.
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Observed vs expected behavior, plus minimal SQL evidence.
+      placeholder: |
+        Observed:
+        Expected:
+        SQL evidence:
+    validations:
+      required: true
+
+  - type: textarea
+    id: migration_context
+    attributes:
+      label: Migration context
+      placeholder: |
+        OS:
+        Commit / version:
+        Fresh install or upgrade?:
+        Old → new version (if upgrade):
+        schema_migrations rows (if available):
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed fix (optional)
+      description: e.g. new migration, trigger fix, backfill query, or Rust fallback logic.
+    validations:
+      required: false
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      placeholder: |
+        - [ ] Existing installs upgrade without data loss
+        - [ ] Fresh installs get correct defaults
+        - [ ] No stale triggers/indices remain
+    validations:
+      required: true
+
+  - type: textarea
+    id: test_plan
+    attributes:
+      label: Test plan
+      placeholder: |
+        - Fresh DB install test
+        - Upgrade test (from a DB created before the fix)
+        - Verify queries and UI reflect correct state
+    validations:
+      required: true

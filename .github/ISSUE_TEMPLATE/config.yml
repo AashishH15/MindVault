@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: "💬 Community Discord"
+    url: "https://discord.gg/UYhqRHbH4M"
+    about: "Ask questions, share ideas, and get help from the community."
+  - name: "🔒 Report a security vulnerability"
+    url: "https://github.com/AashishH15/MindVault/security/advisories/new"
+    about: "Please do not file public issues for security problems. Use GitHub private reporting."

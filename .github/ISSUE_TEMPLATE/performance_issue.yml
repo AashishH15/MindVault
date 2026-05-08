@@ -1,0 +1,73 @@
+name: "⚡ Performance / Responsiveness"
+description: "Report slow operations, UI freezes, or latency regressions"
+title: "[Perf]: "
+labels: ["performance"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What feels slow or unresponsive? Include the user action.
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Include measurements, where it stalls (UI/IPC/DB/LLM), and logs/screenshots.
+      placeholder: |
+        Measured time:
+        Where it stalls:
+        Logs/screenshots:
+    validations:
+      required: false
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: OS
+      options:
+        - Windows
+        - macOS
+        - Linux
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: hardware
+    attributes:
+      label: Hardware (CPU/RAM)
+      placeholder: "e.g. i7 / 16GB"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: llm_provider
+    attributes:
+      label: Local LLM provider (if relevant)
+      options:
+        - Not applicable
+        - Ollama
+        - LM Studio
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      placeholder: |
+        - [ ] Operation completes within target time
+        - [ ] No regressions in correctness/privacy
+    validations:
+      required: true
+
+  - type: textarea
+    id: test_plan
+    attributes:
+      label: Test plan
+      description: How to reproduce and measure before/after.
+    validations:
+      required: true

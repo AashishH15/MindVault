@@ -1,0 +1,59 @@
+name: "✨ Feature Request"
+description: "Suggest a new feature or improvement"
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Problem / motivation
+      description: What user pain or product gap does this address?
+      placeholder: "I want to be able to..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the desired behavior (user-facing first).
+    validations:
+      required: true
+
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Scope & constraints
+      description: Include privacy/security constraints and non-goals.
+      placeholder: |
+        Constraints:
+        Non-goals:
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: List alternatives and why they’re worse.
+    validations:
+      required: false
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Checklist of what “done” means.
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: test_plan
+    attributes:
+      label: Test plan
+      description: How should we validate this works?
+    validations:
+      required: true
