@@ -21,7 +21,7 @@ body:
         Where it stalls:
         Logs/screenshots:
     validations:
-      required: false
+      required: true
 
   - type: dropdown
     id: os
