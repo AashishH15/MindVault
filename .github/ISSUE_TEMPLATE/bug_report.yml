@@ -44,6 +44,14 @@ body:
     validations:
       required: true
 
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed fix (optional)
+      description: e.g. new migration, trigger fix, backfill query, or Rust fallback logic.
+    validations:
+      required: false
+
   - type: dropdown
     id: os
     attributes:
