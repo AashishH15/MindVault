@@ -146,3 +146,29 @@ export function decayRefreshAll() {
 export function decayOptimizeAll() {
   return invokeTyped<number>("decay_optimize_all");
 }
+
+export function debugAssembleContext(nodeIds: string[], scope: string) {
+  return invokeTyped<string>("debug_assemble_context", { nodeIds, scope });
+}
+
+export function listLlmModels(provider: string, endpoint: string) {
+  return invokeTyped<string[]>("llm_list_models", { provider, endpoint });
+}
+
+export function chatWithLlm(
+  nodeIds: string[],
+  scope: string,
+  provider: string,
+  endpoint: string,
+  model: string,
+  userPrompt: string
+) {
+  return invokeTyped<string>("llm_chat", {
+    nodeIds,
+    scope,
+    provider,
+    endpoint,
+    model,
+    userPrompt,
+  });
+}

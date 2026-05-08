@@ -1,6 +1,9 @@
 import {
+  chatWithLlm,
   decayOptimizeAll,
   decayRefreshAll,
+  debugAssembleContext,
+  listLlmModels,
   nodeCreate,
   nodeDelete,
   nodeGet,
@@ -47,4 +50,23 @@ export async function refreshAllDecayScores(): Promise<number> {
 
 export async function optimizeAllDecayRates(): Promise<number> {
   return unwrapIpcResult(decayOptimizeAll());
+}
+
+export async function debugBuildContext(nodeIds: string[], scope: string): Promise<string> {
+  return unwrapIpcResult(debugAssembleContext(nodeIds, scope));
+}
+
+export async function getLlmModels(provider: string, endpoint: string): Promise<string[]> {
+  return unwrapIpcResult(listLlmModels(provider, endpoint));
+}
+
+export async function chatWithScope(
+  nodeIds: string[],
+  scope: string,
+  provider: string,
+  endpoint: string,
+  model: string,
+  userPrompt: string
+): Promise<string> {
+  return unwrapIpcResult(chatWithLlm(nodeIds, scope, provider, endpoint, model, userPrompt));
 }

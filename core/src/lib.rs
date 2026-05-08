@@ -8,6 +8,7 @@ use tauri::Manager;
 mod auth;
 mod decay;
 mod ipc_types;
+pub mod llm;
 mod privacy;
 use ipc_types::{
     Backlink, Door, DoorCreateInput, Node, NodeCreateInput, NodeUpdateInput, Tag, TagCreateInput,
@@ -32,6 +33,9 @@ pub(crate) fn into_ipc<T>(result: Result<T, String>) -> IpcResponse<T> {
     }
 }
 
+pub type AppError = String;
+type AppState = DbState;
+
 #[tauri::command]
 fn greet(name: &str) -> IpcResponse<String> {
     IpcResponse::Ok {
@@ -50,8 +54,15 @@ fn sqlite_db_path<R: tauri::Runtime>(
 pub(crate) fn open_connection(db_path: &Path) -> Result<Connection, String> {
     let conn = Connection::open(db_path)
         .map_err(|err| format!("Failed opening database {}: {err}", db_path.display()))?;
-    conn.pragma_update(None, "foreign_keys", "ON")
-        .map_err(|err| format!("Failed enabling foreign keys: {err}"))?;
+    conn.execute_batch(
+        "
+        PRAGMA foreign_keys = ON;
+        PRAGMA journal_mode = WAL;
+        PRAGMA trusted_schema = OFF;
+        PRAGMA defensive = ON;
+        ",
+    )
+    .map_err(|err| format!("Failed setting SQLite pragmas: {err}"))?;
     Ok(conn)
 }
 
@@ -1038,6 +1049,83 @@ fn node_delete(node_id: String, state: tauri::State<'_, DbState>) -> IpcResponse
     })())
 }
 
+#[tauri::command]
+fn debug_assemble_context(
+    node_ids: Vec<String>,
+    scope: String,
+    state: tauri::State<'_, DbState>,
+) -> IpcResponse<String> {
+    into_ipc((|| {
+        let conn = open_connection(&state.db_path)?;
+        llm::assembler::build_context(
+            &conn,
+            node_ids,
+            llm::assembler::AssemblerConfig {
+                scope,
+                max_tokens: 4000,
+            },
+        )
+    })())
+}
+
+#[tauri::command]
+async fn llm_list_models(provider: String, endpoint: String) -> IpcResponse<Vec<String>> {
+    let parsed_provider = match provider.trim().to_lowercase().as_str() {
+        "ollama" => llm::client::LlmProvider::Ollama,
+        "lmstudio" => llm::client::LlmProvider::LmStudio,
+        _ => {
+            return IpcResponse::Err {
+                err: "Unsupported provider. Use 'ollama' or 'lmstudio'.".to_string(),
+            }
+        }
+    };
+    let client = llm::client::UniversalClient::new(parsed_provider, endpoint, String::new());
+    into_ipc(llm::client::LlmClient::list_models(&client).await)
+}
+
+#[tauri::command]
+fn llm_chat(
+    node_ids: Vec<String>,
+    scope: String,
+    provider: String,
+    endpoint: String,
+    model: String,
+    user_prompt: String,
+    state: tauri::State<'_, AppState>,
+) -> IpcResponse<String> {
+    let assembled = (|| {
+        let conn = open_connection(&state.db_path)?;
+        llm::assembler::build_context(
+            &conn,
+            node_ids,
+            llm::assembler::AssemblerConfig {
+                scope,
+                max_tokens: 4000,
+            },
+        )
+    })();
+
+    let system_prompt_from_assembler = match assembled {
+        Ok(value) => value,
+        Err(err) => return IpcResponse::Err { err },
+    };
+
+    let parsed_provider = match provider.trim().to_lowercase().as_str() {
+        "ollama" => llm::client::LlmProvider::Ollama,
+        "lmstudio" => llm::client::LlmProvider::LmStudio,
+        _ => {
+            return IpcResponse::Err {
+                err: "Unsupported provider. Use 'ollama' or 'lmstudio'.".to_string(),
+            };
+        }
+    };
+
+    let client = llm::client::UniversalClient::new(parsed_provider, endpoint, model);
+    into_ipc(tauri::async_runtime::block_on(
+        llm::client::LlmClient::complete(&client, &system_prompt_from_assembler, &user_prompt),
+    ))
+}
+
 fn run_decay_refresh(db_path: &std::path::Path) -> Result<usize, String> {
     let conn = open_connection(db_path)?;
     let mut statement = conn
@@ -1244,7 +1332,10 @@ pub fn run() {
             auth::auth_secret_set,
             auth::auth_secret_verify,
             decay_refresh_all,
-            decay_optimize_all
+            decay_optimize_all,
+            debug_assemble_context,
+            llm_list_models,
+            llm_chat
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|err| {

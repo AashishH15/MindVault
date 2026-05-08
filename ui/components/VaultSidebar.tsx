@@ -21,6 +21,7 @@ type VaultSidebarProps = {
   onVaultCreated: (vaultId: string) => void;
   onVaultDeleted: (vaultId: string) => void;
   onOpenDashboard: () => void;
+  onOpenSettings: () => void;
   isRedactedUnlocked: boolean;
   setIsRedactedUnlocked: (value: boolean) => void;
 };
@@ -33,6 +34,7 @@ function VaultSidebar({
   onVaultCreated,
   onVaultDeleted,
   onOpenDashboard,
+  onOpenSettings,
   isRedactedUnlocked,
   setIsRedactedUnlocked,
 }: VaultSidebarProps) {
@@ -545,6 +547,9 @@ function VaultSidebar({
           );
         })}
       </ul>
+      <button type="button" className="settings-trigger" onClick={onOpenSettings}>
+        ⚙️ Settings
+      </button>
       {authModalOpen && (
         <div className="sidebar-auth-overlay" onClick={() => closeAuthModal(false)}>
           <div

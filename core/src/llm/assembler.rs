@@ -1,0 +1,361 @@
+use rusqlite::Connection;
+use serde_json::Value;
+
+use crate::privacy::{generate_pointer_stub, get_effective_privacy, get_privacy_rank};
+
+const CHARS_PER_TOKEN_ESTIMATE: usize = 4;
+const ATTENTION_SINK_TOKENS: usize = 50;
+const ATTENTION_SINK_CHARS: usize = ATTENTION_SINK_TOKENS * CHARS_PER_TOKEN_ESTIMATE;
+
+pub struct AssemblerConfig {
+    pub scope: String,
+    pub max_tokens: usize,
+}
+
+struct AssemblerNode {
+    id: String,
+    title: String,
+    summary: String,
+    detail: String,
+    node_privacy_tier: Option<String>,
+    sub_vault_privacy_tier: Option<String>,
+    vault_privacy_tier: Option<String>,
+    score: f64,
+}
+
+fn parse_score(decay_json: &str) -> f64 {
+    let parsed: Value = serde_json::from_str(decay_json).unwrap_or_else(|_| serde_json::json!({}));
+    let access_count = parsed
+        .get("access_count_30active")
+        .and_then(|value| value.as_f64())
+        .or_else(|| {
+            parsed
+                .get("access_count_30d")
+                .and_then(|value| value.as_f64())
+        })
+        .unwrap_or(0.0);
+    let base_score = (access_count / 10.0).clamp(0.1, 1.0);
+    let link_bonus = parsed
+        .get("link_count")
+        .and_then(|value| value.as_f64())
+        .map(|count| (count * 0.05).clamp(0.0, 0.2))
+        .unwrap_or(0.0);
+    base_score + link_bonus
+}
+
+fn escape_xml_attr(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
+fn estimate_tokens(text: &str) -> usize {
+    text.len() / CHARS_PER_TOKEN_ESTIMATE
+}
+
+fn trim_tail_with_attention_sink(text: &str, max_tokens: usize) -> String {
+    if estimate_tokens(text) <= max_tokens {
+        return text.to_string();
+    }
+
+    let max_chars = max_tokens.saturating_mul(CHARS_PER_TOKEN_ESTIMATE);
+    if max_chars == 0 {
+        return String::new();
+    }
+
+    // Attention sink protection: never trim from the beginning. Always trim the tail.
+    // If max_tokens is >= 50, explicitly preserve the first ~50 token window.
+    if max_tokens < ATTENTION_SINK_TOKENS {
+        return text.chars().take(max_chars).collect();
+    }
+
+    let sink: String = text.chars().take(ATTENTION_SINK_CHARS).collect();
+    let sink_len = sink.chars().count();
+    let remaining_chars = max_chars.saturating_sub(sink_len);
+    let tail: String = text.chars().skip(sink_len).take(remaining_chars).collect();
+    format!("{sink}{tail}")
+}
+
+fn fetch_requested_nodes(
+    db: &Connection,
+    node_ids: &[String],
+) -> Result<Vec<AssemblerNode>, crate::AppError> {
+    let mut statement = db
+        .prepare(
+            "SELECT n.id,
+                    n.title,
+                    n.summary,
+                    COALESCE(n.detail, '') AS detail,
+                    n.privacy_tier,
+                    n.vault_id,
+                    n.decay,
+                    sv.privacy_tier,
+                    v.privacy_tier
+             FROM nodes n
+             LEFT JOIN sub_vaults sv
+               ON sv.id = n.sub_vault_id
+              AND sv.deleted_at IS NULL
+             LEFT JOIN vaults v
+               ON v.id = n.vault_id
+              AND v.deleted_at IS NULL
+             WHERE n.id = ?1
+               AND n.deleted_at IS NULL
+               AND n.is_archived = 0;",
+        )
+        .map_err(|err| format!("Failed preparing assembler query: {err}"))?;
+
+    let mut nodes = Vec::new();
+    for node_id in node_ids {
+        let mut rows = statement
+            .query([node_id.as_str()])
+            .map_err(|err| format!("Failed querying node {node_id} for assembler: {err}"))?;
+        let maybe_row = rows
+            .next()
+            .map_err(|err| format!("Failed reading assembler row for node {node_id}: {err}"))?;
+        if let Some(row) = maybe_row {
+            let decay_json: String = row.get(6).map_err(|err| {
+                format!("Failed decoding decay field for node {node_id} in assembler: {err}")
+            })?;
+            nodes.push(AssemblerNode {
+                id: row.get(0).map_err(|err| {
+                    format!("Failed decoding id field for node {node_id} in assembler: {err}")
+                })?,
+                title: row.get(1).map_err(|err| {
+                    format!("Failed decoding title field for node {node_id} in assembler: {err}")
+                })?,
+                summary: row.get(2).map_err(|err| {
+                    format!("Failed decoding summary field for node {node_id} in assembler: {err}")
+                })?,
+                detail: row.get(3).map_err(|err| {
+                    format!("Failed decoding detail field for node {node_id} in assembler: {err}")
+                })?,
+                node_privacy_tier: row.get(4).map_err(|err| {
+                    format!(
+                        "Failed decoding node privacy field for node {node_id} in assembler: {err}"
+                    )
+                })?,
+                sub_vault_privacy_tier: row.get(7).map_err(|err| {
+                    format!(
+                        "Failed decoding sub-vault privacy field for node {node_id} in assembler: {err}"
+                    )
+                })?,
+                vault_privacy_tier: row.get(8).map_err(|err| {
+                    format!(
+                        "Failed decoding vault privacy field for node {node_id} in assembler: {err}"
+                    )
+                })?,
+                score: parse_score(&decay_json),
+            });
+        }
+    }
+    Ok(nodes)
+}
+
+pub fn build_context(
+    db: &Connection,
+    node_ids: Vec<String>,
+    config: AssemblerConfig,
+) -> Result<String, crate::AppError> {
+    let mut nodes = fetch_requested_nodes(db, &node_ids)?;
+    nodes.sort_by(|a, b| b.score.total_cmp(&a.score));
+
+    let mut blocks: Vec<String> = Vec::new();
+    let mut current_len: usize = 0;
+
+    for node in nodes {
+        let effective_tier = get_effective_privacy(
+            node.node_privacy_tier.as_deref(),
+            node.sub_vault_privacy_tier.as_deref(),
+            node.vault_privacy_tier.as_deref(),
+        );
+        let rank = get_privacy_rank(Some(effective_tier));
+
+        let blocked = match config.scope.as_str() {
+            "cloud" => rank > 0,
+            "local" => rank > 1,
+            _ => false,
+        };
+
+        let block = if blocked {
+            generate_pointer_stub(&node.title, &node.id)
+        } else {
+            format!(
+                "<document title=\"{}\">\n{}\n\n{}\n</document>",
+                escape_xml_attr(&node.title),
+                node.summary,
+                node.detail
+            )
+        };
+
+        let candidate_len = if blocks.is_empty() {
+            block.len()
+        } else {
+            block.len() + 2
+        };
+        let next_len = current_len + candidate_len;
+        let estimated_tokens = next_len / CHARS_PER_TOKEN_ESTIMATE;
+        if estimated_tokens > config.max_tokens {
+            if blocks.is_empty() {
+                let trimmed = trim_tail_with_attention_sink(&block, config.max_tokens);
+                if !trimmed.is_empty() {
+                    blocks.push(trimmed);
+                }
+            }
+            break;
+        }
+
+        current_len = next_len;
+        blocks.push(block);
+    }
+
+    let assembled = blocks.join("\n\n");
+    Ok(trim_tail_with_attention_sink(&assembled, config.max_tokens))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{build_context, estimate_tokens, AssemblerConfig, ATTENTION_SINK_CHARS};
+    use rusqlite::Connection;
+
+    fn setup_in_memory_db() -> Connection {
+        let conn = match Connection::open_in_memory() {
+            Ok(db) => db,
+            Err(err) => panic!("failed opening in-memory sqlite for assembler test: {err}"),
+        };
+
+        if let Err(err) = conn.execute_batch(
+            "CREATE TABLE vaults (
+                id TEXT PRIMARY KEY,
+                privacy_tier TEXT NOT NULL,
+                deleted_at TEXT
+            );
+            CREATE TABLE sub_vaults (
+                id TEXT PRIMARY KEY,
+                vault_id TEXT NOT NULL,
+                privacy_tier TEXT,
+                deleted_at TEXT
+            );
+            CREATE TABLE nodes (
+                id TEXT PRIMARY KEY,
+                vault_id TEXT NOT NULL,
+                sub_vault_id TEXT,
+                title TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                detail TEXT,
+                privacy_tier TEXT,
+                decay TEXT NOT NULL,
+                is_archived INTEGER NOT NULL DEFAULT 0,
+                deleted_at TEXT
+            );",
+        ) {
+            panic!("failed creating assembler test schema: {err}");
+        }
+
+        if let Err(err) = conn.execute(
+            "INSERT INTO vaults (id, privacy_tier, deleted_at) VALUES (?1, ?2, NULL);",
+            ["vault_a", "open"],
+        ) {
+            panic!("failed inserting vault for assembler test: {err}");
+        }
+
+        if let Err(err) = conn.execute(
+            "INSERT INTO nodes (
+                id, vault_id, sub_vault_id, title, summary, detail, privacy_tier, decay, is_archived, deleted_at
+            ) VALUES (?1, ?2, NULL, ?3, ?4, ?5, ?6, ?7, 0, NULL);",
+            [
+                "node_local_only",
+                "vault_a",
+                "Local Only Node",
+                "local summary",
+                "local detail",
+                "local_only",
+                "{\"access_count_30active\":6}",
+            ],
+        ) {
+            panic!("failed inserting node for assembler test: {err}");
+        }
+
+        conn
+    }
+
+    #[test]
+    fn local_only_node_is_included_for_local_scope_and_stubbed_for_cloud() {
+        let conn = setup_in_memory_db();
+        let node_ids = vec!["node_local_only".to_string()];
+
+        let local_result = match build_context(
+            &conn,
+            node_ids.clone(),
+            AssemblerConfig {
+                scope: "local".to_string(),
+                max_tokens: 4000,
+            },
+        ) {
+            Ok(value) => value,
+            Err(err) => panic!("local scope assembler failed: {err}"),
+        };
+
+        assert!(local_result.contains("<document title=\"Local Only Node\">"));
+        assert!(local_result.contains("local summary"));
+        assert!(local_result.contains("local detail"));
+
+        let cloud_result = match build_context(
+            &conn,
+            node_ids,
+            AssemblerConfig {
+                scope: "cloud".to_string(),
+                max_tokens: 4000,
+            },
+        ) {
+            Ok(value) => value,
+            Err(err) => panic!("cloud scope assembler failed: {err}"),
+        };
+
+        assert!(cloud_result.contains("[LOCKED NODE STUB] Title: Local Only Node"));
+        assert!(!cloud_result.contains("<document title=\"Local Only Node\">"));
+        assert!(!cloud_result.contains("local detail"));
+    }
+
+    #[test]
+    fn trimming_preserves_prompt_head_attention_sink() {
+        let conn = setup_in_memory_db();
+        let large_detail = "x".repeat(4000);
+        if let Err(err) = conn.execute(
+            "UPDATE nodes SET detail = ?2 WHERE id = ?1;",
+            ["node_local_only", large_detail.as_str()],
+        ) {
+            panic!("failed updating large detail for assembler test: {err}");
+        }
+
+        let full = match build_context(
+            &conn,
+            vec!["node_local_only".to_string()],
+            AssemblerConfig {
+                scope: "local".to_string(),
+                max_tokens: 4000,
+            },
+        ) {
+            Ok(value) => value,
+            Err(err) => panic!("full assembler context failed: {err}"),
+        };
+
+        let trimmed = match build_context(
+            &conn,
+            vec!["node_local_only".to_string()],
+            AssemblerConfig {
+                scope: "local".to_string(),
+                max_tokens: 120,
+            },
+        ) {
+            Ok(value) => value,
+            Err(err) => panic!("trimmed assembler context failed: {err}"),
+        };
+
+        let head: String = full.chars().take(ATTENTION_SINK_CHARS).collect();
+        assert!(trimmed.starts_with(&head));
+        assert!(estimate_tokens(&trimmed) <= 120);
+    }
+}

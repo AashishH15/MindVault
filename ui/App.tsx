@@ -1,9 +1,11 @@
-import { useEffect, useState, type MouseEvent } from "react";
+import { useEffect, useMemo, useState, type MouseEvent } from "react";
 import ErrorBoundary from "./components/ErrorBoundary";
 import NodeEditor from "./components/NodeEditor";
 import NodeList from "./components/NodeList";
 import VaultSidebar from "./components/VaultSidebar";
 import DecayDashboard from "./components/DecayDashboard";
+import LlmSettings from "./components/LlmSettings";
+import ScopeIndicator from "./components/ScopeIndicator";
 import { refreshAllDecayScores } from "./services/nodes";
 import "./App.css";
 
@@ -20,7 +22,9 @@ function App() {
   const [nodeRefreshKey, setNodeRefreshKey] = useState<number>(0);
   const [isRedactedUnlocked, setIsRedactedUnlocked] = useState<boolean>(false);
   const [showDashboard, setShowDashboard] = useState<boolean>(false);
+  const [showSettings, setShowSettings] = useState<boolean>(false);
   const leftPaneExpanded = leftPaneVisible || selectedNodeId !== null;
+  const scopeNodeIds = useMemo(() => (selectedNodeId ? [selectedNodeId] : []), [selectedNodeId]);
 
   function closeAllPanes() {
     setLeftPaneVisible(false);
@@ -37,6 +41,7 @@ function App() {
     setSelectedVaultId(vaultId);
     setSelectedNodeId(null);
     setShowDashboard(false);
+    setShowSettings(false);
     setNodeRefreshKey((value) => value + 1);
   }
 
@@ -58,12 +63,14 @@ function App() {
   function onSelectNode(nodeId: string) {
     setSelectedNodeId(nodeId);
     setShowDashboard(false);
+    setShowSettings(false);
     setRightPaneVisible(true);
   }
 
   function onNodeCreated(nodeId: string) {
     setSelectedNodeId(nodeId);
     setShowDashboard(false);
+    setShowSettings(false);
     setRightPaneVisible(true);
     setNodeRefreshKey((value) => value + 1);
   }
@@ -79,6 +86,14 @@ function App() {
   function onOpenDashboard() {
     setSelectedNodeId(null);
     setShowDashboard(true);
+    setShowSettings(false);
+    setRightPaneVisible(true);
+  }
+
+  function onOpenSettings() {
+    setSelectedNodeId(null);
+    setShowDashboard(false);
+    setShowSettings(true);
     setRightPaneVisible(true);
   }
 
@@ -110,6 +125,7 @@ function App() {
                 onVaultCreated={onVaultCreated}
                 onVaultDeleted={onVaultDeleted}
                 onOpenDashboard={onOpenDashboard}
+                onOpenSettings={onOpenSettings}
                 refreshKey={vaultRefreshKey}
                 isRedactedUnlocked={isRedactedUnlocked}
                 setIsRedactedUnlocked={setIsRedactedUnlocked}
@@ -138,15 +154,20 @@ function App() {
           <div className={`pane-wrap right ${rightPaneVisible ? "show" : ""}`}>
             {showDashboard ? (
               <DecayDashboard refreshKey={nodeRefreshKey} />
+            ) : showSettings ? (
+              <LlmSettings />
             ) : (
-              <NodeEditor
-                selectedNodeId={selectedNodeId}
-                onNodeDeleted={onNodeDeleted}
-                onSaveSuccess={() => setNodeRefreshKey((value) => value + 1)}
-                refreshKey={nodeRefreshKey}
-                isRedactedUnlocked={isRedactedUnlocked}
-                setIsRedactedUnlocked={setIsRedactedUnlocked}
-              />
+              <div className="right-pane-stack">
+                <ScopeIndicator selectedNodeIds={scopeNodeIds} scope="local" />
+                <NodeEditor
+                  selectedNodeId={selectedNodeId}
+                  onNodeDeleted={onNodeDeleted}
+                  onSaveSuccess={() => setNodeRefreshKey((value) => value + 1)}
+                  refreshKey={nodeRefreshKey}
+                  isRedactedUnlocked={isRedactedUnlocked}
+                  setIsRedactedUnlocked={setIsRedactedUnlocked}
+                />
+              </div>
             )}
           </div>
           <div className="edge-trigger right" />
