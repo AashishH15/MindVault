@@ -467,6 +467,14 @@ fn chat_append_message(
 }
 
 #[tauri::command]
+fn chat_clear_history(state: tauri::State<'_, AppState>) -> IpcResponse<()> {
+    into_ipc((|| {
+        let conn = open_connection(&state.db_path)?;
+        chat::clear_chat_history(&conn)
+    })())
+}
+
+#[tauri::command]
 fn vault_create(input: VaultCreateInput, state: tauri::State<'_, DbState>) -> IpcResponse<Vault> {
     into_ipc((|| {
         let mut conn = open_connection(&state.db_path)?;
@@ -1096,6 +1104,11 @@ fn debug_assemble_context(
 }
 
 #[tauri::command]
+fn llm_count_tokens(text: String) -> IpcResponse<usize> {
+    into_ipc(Ok(crate::llm::assembler::count_tokens(&text)))
+}
+
+#[tauri::command]
 async fn llm_list_models(provider: String, endpoint: String) -> IpcResponse<Vec<String>> {
     let parsed_provider = match provider.trim().to_lowercase().as_str() {
         "ollama" => llm::client::LlmProvider::Ollama,
@@ -1111,7 +1124,7 @@ async fn llm_list_models(provider: String, endpoint: String) -> IpcResponse<Vec<
 }
 
 #[tauri::command]
-fn llm_chat(
+async fn llm_chat(
     node_ids: Vec<String>,
     scope: String,
     provider: String,
@@ -1119,9 +1132,11 @@ fn llm_chat(
     model: String,
     user_prompt: String,
     state: tauri::State<'_, AppState>,
-) -> IpcResponse<String> {
-    let assembled = (|| {
-        let conn = open_connection(&state.db_path)?;
+) -> Result<String, String> {
+    let db_path = state.db_path.clone();
+
+    let system_prompt_from_assembler = {
+        let conn = open_connection(&db_path)?;
         llm::assembler::build_context(
             &conn,
             node_ids,
@@ -1130,21 +1145,12 @@ fn llm_chat(
                 max_tokens: DEFAULT_ASSEMBLER_MAX_TOKENS,
             },
         )
-    })();
-
-    let system_prompt_from_assembler = match assembled {
-        Ok(value) => value,
-        Err(err) => return IpcResponse::Err { err },
-    };
+    }?;
 
     let parsed_provider = match provider.trim().to_lowercase().as_str() {
         "ollama" => llm::client::LlmProvider::Ollama,
         "lmstudio" => llm::client::LlmProvider::LmStudio,
-        _ => {
-            return IpcResponse::Err {
-                err: "Unsupported provider. Use 'ollama' or 'lmstudio'.".to_string(),
-            };
-        }
+        _ => return Err("Unsupported provider. Use 'ollama' or 'lmstudio'.".to_string()),
     };
 
     let client = llm::client::UniversalClient::new(parsed_provider, endpoint, model);
@@ -1152,9 +1158,7 @@ fn llm_chat(
         role: "user".to_string(),
         content: user_prompt,
     }];
-    into_ipc(tauri::async_runtime::block_on(
-        llm::client::LlmClient::complete(&client, &system_prompt_from_assembler, &messages),
-    ))
+    llm::client::LlmClient::complete(&client, &system_prompt_from_assembler, &messages).await
 }
 
 fn run_decay_refresh(db_path: &std::path::Path) -> Result<usize, String> {
@@ -1341,6 +1345,7 @@ pub fn run() {
             db_ping,
             chat_get_history,
             chat_append_message,
+            chat_clear_history,
             vault_create,
             vault_list,
             vault_delete,
@@ -1367,6 +1372,7 @@ pub fn run() {
             decay_refresh_all,
             decay_optimize_all,
             debug_assemble_context,
+            llm_count_tokens,
             llm_list_models,
             llm_chat
         ])

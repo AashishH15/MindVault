@@ -61,6 +61,10 @@ export function chatAppendMessage(id: string, role: string, content: string) {
   return invokeTyped<void>("chat_append_message", { id, role, content });
 }
 
+export function chatClearHistory() {
+  return invokeTyped<void>("chat_clear_history");
+}
+
 export function vaultCreate(input: VaultCreateInput) {
   return invokeTyped<Vault>("vault_create", { input });
 }
@@ -165,6 +169,14 @@ export function debugAssembleContext(nodeIds: string[], scope: string) {
   return invokeTyped<string>("debug_assemble_context", { nodeIds, scope });
 }
 
+export async function countTokens(text: string): Promise<number> {
+  const result = await invokeTyped<number>("llm_count_tokens", { text });
+  if ("ok" in result) {
+    return result.ok;
+  }
+  throw new Error(result.err);
+}
+
 export function listLlmModels(provider: string, endpoint: string) {
   return invokeTyped<string[]>("llm_list_models", { provider, endpoint });
 }
@@ -177,12 +189,14 @@ export function chatWithLlm(
   model: string,
   userPrompt: string
 ) {
-  return invokeTyped<string>("llm_chat", {
+  return invoke<string>("llm_chat", {
     nodeIds,
     scope,
     provider,
     endpoint,
     model,
     userPrompt,
-  });
+  })
+    .then((ok) => ({ ok }) as IpcResult<string>)
+    .catch((error) => ({ err: String(error) }) as IpcResult<string>);
 }

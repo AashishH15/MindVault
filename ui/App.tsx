@@ -6,6 +6,7 @@ import VaultSidebar from "./components/VaultSidebar";
 import DecayDashboard from "./components/DecayDashboard";
 import LlmSettings from "./components/LlmSettings";
 import ScopeIndicator from "./components/ScopeIndicator";
+import ChatPanel from "./components/ChatPanel";
 import type { ContextAssemblerScope } from "./constants/contextBudget";
 import { refreshAllDecayScores } from "./services/nodes";
 import "./App.css";
@@ -14,7 +15,6 @@ function App() {
   useEffect(() => {
     void refreshAllDecayScores().catch(() => {});
   }, []);
-  const [omniboxText, setOmniboxText] = useState<string>("");
   const [selectedVaultId, setSelectedVaultId] = useState<string | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [leftPaneVisible, setLeftPaneVisible] = useState<boolean>(false);
@@ -103,13 +103,7 @@ function App() {
     <ErrorBoundary>
       <main className="hybrid-shell">
         <section className="zen-canvas" onClick={onZenCanvasClick}>
-          <h1>MindVault</h1>
-          <textarea
-            className="omnibox"
-            value={omniboxText}
-            onChange={(e) => setOmniboxText(e.target.value)}
-            placeholder="Ask, capture, or think..."
-          />
+          <ChatPanel selectedNodeIds={scopeNodeIds} scope={assemblerScope} />
         </section>
 
         <div

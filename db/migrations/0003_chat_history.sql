@@ -1,6 +1,0 @@
-CREATE TABLE IF NOT EXISTS session_messages (
-    id TEXT PRIMARY KEY,
-    role TEXT NOT NULL,
-    content TEXT NOT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);

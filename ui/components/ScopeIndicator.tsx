@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { CONTEXT_MAX_TOKENS, type ContextAssemblerScope } from "../constants/contextBudget";
+import { countTokens } from "../ipc";
 import { debugBuildContext } from "../services/nodes";
 import { AppError } from "../services/ipcResult";
 
@@ -10,7 +11,8 @@ type ScopeIndicatorProps = {
 };
 
 function ScopeIndicator({ selectedNodeIds, scope, onScopeChange }: ScopeIndicatorProps) {
-  const [tokenEstimate, setTokenEstimate] = useState(0);
+  const [contextString, setContextString] = useState("");
+  const [tokenCount, setTokenCount] = useState(0);
   const [status, setStatus] = useState("");
 
   useEffect(() => {
@@ -21,12 +23,14 @@ function ScopeIndicator({ selectedNodeIds, scope, onScopeChange }: ScopeIndicato
         if (!active) {
           return;
         }
-        setTokenEstimate(Math.floor(context.length / 4));
+        setContextString(context);
         setStatus("");
       } catch (err) {
         if (!active) {
           return;
         }
+        setContextString("");
+        setTokenCount(0);
         if (err instanceof AppError) {
           setStatus(err.message);
         } else {
@@ -39,8 +43,34 @@ function ScopeIndicator({ selectedNodeIds, scope, onScopeChange }: ScopeIndicato
     };
   }, [scope, selectedNodeIds]);
 
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      if (!contextString) {
+        if (active) {
+          setTokenCount(0);
+        }
+        return;
+      }
+      try {
+        const exactCount = await countTokens(contextString);
+        if (active) {
+          setTokenCount(exactCount);
+        }
+      } catch {
+        if (active) {
+          setTokenCount(0);
+          setStatus("Unable to compute token count.");
+        }
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [contextString]);
+
   const maxTokens = CONTEXT_MAX_TOKENS;
-  const overBudget = tokenEstimate > maxTokens;
+  const overBudget = tokenCount > maxTokens;
 
   return (
     <section className="scope-indicator">
@@ -70,12 +100,12 @@ function ScopeIndicator({ selectedNodeIds, scope, onScopeChange }: ScopeIndicato
       <div className="scope-indicator-row">
         <span>Nodes in Context: {selectedNodeIds.length}</span>
         <span>
-          Estimated Tokens: {tokenEstimate} / {maxTokens}
+          Estimated Tokens: {tokenCount} / {maxTokens}
         </span>
       </div>
       <progress
         className={`scope-indicator-track ${overBudget ? "danger" : ""}`}
-        value={Math.min(tokenEstimate, maxTokens)}
+        value={Math.min(tokenCount, maxTokens)}
         max={maxTokens}
       />
       {status && <p className="scope-indicator-status">{status}</p>}
