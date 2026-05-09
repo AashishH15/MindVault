@@ -1,11 +1,61 @@
+use std::sync::OnceLock;
+
 use rusqlite::Connection;
 use serde_json::Value;
+use tiktoken_rs::CoreBPE;
 
 use crate::privacy::{generate_pointer_stub, get_effective_privacy, get_privacy_rank};
 
-const CHARS_PER_TOKEN_ESTIMATE: usize = 4;
 const ATTENTION_SINK_TOKENS: usize = 50;
-const ATTENTION_SINK_CHARS: usize = ATTENTION_SINK_TOKENS * CHARS_PER_TOKEN_ESTIMATE;
+const FALLBACK_CHARS_PER_TOKEN_EST: usize = 4;
+
+fn cl100k_bpe() -> &'static CoreBPE {
+    static BPE: OnceLock<CoreBPE> = OnceLock::new();
+    BPE.get_or_init(|| {
+        tiktoken_rs::cl100k_base().expect("failed to load cl100k tokenizer (tiktoken-rs)")
+    })
+}
+
+/// Token count for budgeting using OpenAI `cl100k_base` (tiktoken-compatible).
+pub fn count_tokens(text: &str) -> usize {
+    cl100k_bpe()
+        .encode_with_special_tokens(text)
+        .len()
+}
+
+fn trim_tail_fallback_chars(text: &str, max_tokens: usize) -> String {
+    let max_chars = max_tokens.saturating_mul(FALLBACK_CHARS_PER_TOKEN_EST);
+    if max_chars == 0 {
+        return String::new();
+    }
+    if max_tokens < ATTENTION_SINK_TOKENS {
+        return text.chars().take(max_chars).collect();
+    }
+    let sink_chars = ATTENTION_SINK_TOKENS.saturating_mul(FALLBACK_CHARS_PER_TOKEN_EST);
+    let sink: String = text.chars().take(sink_chars).collect();
+    let sink_len = sink.chars().count();
+    let remaining_chars = max_chars.saturating_sub(sink_len);
+    let tail: String = text.chars().skip(sink_len).take(remaining_chars).collect();
+    format!("{sink}{tail}")
+}
+
+/// Trim `text` to at most `max_tokens` (cl100k), preserving token boundaries.
+fn trim_tail_with_attention_sink(text: &str, max_tokens: usize) -> String {
+    let bpe = cl100k_bpe();
+    let ids = bpe.encode_with_special_tokens(text);
+    if ids.len() <= max_tokens {
+        return text.to_string();
+    }
+    if max_tokens == 0 {
+        return String::new();
+    }
+
+    let head = &ids[..max_tokens];
+    match bpe.decode(head.to_vec()) {
+        Ok(decoded) => decoded,
+        Err(_) => trim_tail_fallback_chars(text, max_tokens),
+    }
+}
 
 pub struct AssemblerConfig {
     pub scope: String,
@@ -50,33 +100,6 @@ fn escape_xml_attr(value: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace('\'', "&apos;")
-}
-
-fn estimate_tokens(text: &str) -> usize {
-    text.len() / CHARS_PER_TOKEN_ESTIMATE
-}
-
-fn trim_tail_with_attention_sink(text: &str, max_tokens: usize) -> String {
-    if estimate_tokens(text) <= max_tokens {
-        return text.to_string();
-    }
-
-    let max_chars = max_tokens.saturating_mul(CHARS_PER_TOKEN_ESTIMATE);
-    if max_chars == 0 {
-        return String::new();
-    }
-
-    // Attention sink protection: never trim from the beginning. Always trim the tail.
-    // If max_tokens is >= 50, explicitly preserve the first ~50 token window.
-    if max_tokens < ATTENTION_SINK_TOKENS {
-        return text.chars().take(max_chars).collect();
-    }
-
-    let sink: String = text.chars().take(ATTENTION_SINK_CHARS).collect();
-    let sink_len = sink.chars().count();
-    let remaining_chars = max_chars.saturating_sub(sink_len);
-    let tail: String = text.chars().skip(sink_len).take(remaining_chars).collect();
-    format!("{sink}{tail}")
 }
 
 fn fetch_requested_nodes(
@@ -162,8 +185,7 @@ pub fn build_context(
     let mut nodes = fetch_requested_nodes(db, &node_ids)?;
     nodes.sort_by(|a, b| b.score.total_cmp(&a.score));
 
-    let mut blocks: Vec<String> = Vec::new();
-    let mut current_len: usize = 0;
+    let mut assembled = String::new();
 
     for node in nodes {
         let effective_tier = get_effective_privacy(
@@ -190,34 +212,34 @@ pub fn build_context(
             )
         };
 
-        let candidate_len = if blocks.is_empty() {
-            block.len()
+        let candidate = if assembled.is_empty() {
+            block.clone()
         } else {
-            block.len() + 2
+            format!("{assembled}\n\n{block}")
         };
-        let next_len = current_len + candidate_len;
-        let estimated_tokens = next_len / CHARS_PER_TOKEN_ESTIMATE;
-        if estimated_tokens > config.max_tokens {
-            if blocks.is_empty() {
+
+        if count_tokens(&candidate) > config.max_tokens {
+            if assembled.is_empty() {
                 let trimmed = trim_tail_with_attention_sink(&block, config.max_tokens);
                 if !trimmed.is_empty() {
-                    blocks.push(trimmed);
+                    assembled = trimmed;
                 }
             }
             break;
         }
 
-        current_len = next_len;
-        blocks.push(block);
+        assembled = candidate;
     }
 
-    let assembled = blocks.join("\n\n");
     Ok(trim_tail_with_attention_sink(&assembled, config.max_tokens))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{build_context, estimate_tokens, AssemblerConfig, ATTENTION_SINK_CHARS};
+    use super::{
+        build_context, count_tokens, trim_tail_with_attention_sink, AssemblerConfig,
+        ATTENTION_SINK_TOKENS,
+    };
     use rusqlite::Connection;
 
     fn setup_in_memory_db() -> Connection {
@@ -354,8 +376,16 @@ mod tests {
             Err(err) => panic!("trimmed assembler context failed: {err}"),
         };
 
-        let head: String = full.chars().take(ATTENTION_SINK_CHARS).collect();
+        let bpe = tiktoken_rs::cl100k_base().expect("cl100k in test");
+        let full_ids = bpe.encode_with_special_tokens(&full);
+        let sink_n = full_ids.len().min(ATTENTION_SINK_TOKENS);
+        let head = bpe
+            .decode(full_ids[..sink_n].to_vec())
+            .expect("decode sink prefix");
         assert!(trimmed.starts_with(&head));
-        assert!(estimate_tokens(&trimmed) <= 120);
+        assert!(count_tokens(&trimmed) <= 120);
+
+        let direct = trim_tail_with_attention_sink(&full, 120);
+        assert_eq!(direct, trimmed);
     }
 }
