@@ -8,14 +8,44 @@ import LlmSettings from "./components/LlmSettings";
 import ScopeIndicator from "./components/ScopeIndicator";
 import ChatPanel from "./components/ChatPanel";
 import ActiveMemoryPanel from "./components/ActiveMemoryPanel";
+import OnboardingShell from "./components/OnboardingShell";
 import type { ContextAssemblerScope } from "./constants/contextBudget";
 import { refreshAllDecayScores } from "./services/nodes";
+import { getOnboardingComplete, setOnboardingComplete } from "./services/settings";
 import "./App.css";
 
 function App() {
+  const [onboardingResolved, setOnboardingResolved] = useState<boolean>(false);
+  const [needsOnboarding, setNeedsOnboarding] = useState<boolean>(false);
+  const [onboardingBusy, setOnboardingBusy] = useState<boolean>(false);
+  const [onboardingError, setOnboardingError] = useState<string | null>(null);
+
   useEffect(() => {
     void refreshAllDecayScores().catch(() => {});
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const isComplete = await getOnboardingComplete();
+        if (!cancelled) {
+          setNeedsOnboarding(!isComplete);
+          setOnboardingResolved(true);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setOnboardingError(String(error));
+          setOnboardingResolved(true);
+          setNeedsOnboarding(false);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const [selectedVaultId, setSelectedVaultId] = useState<string | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [leftPaneVisible, setLeftPaneVisible] = useState<boolean>(false);
@@ -100,80 +130,126 @@ function App() {
     setRightPaneVisible(true);
   }
 
+  async function completeOnboardingShell() {
+    setOnboardingBusy(true);
+    setOnboardingError(null);
+    try {
+      await setOnboardingComplete(true);
+      setNeedsOnboarding(false);
+    } catch (error) {
+      setOnboardingError(String(error));
+    } finally {
+      setOnboardingBusy(false);
+    }
+  }
+
+  async function skipOnboardingShell() {
+    setOnboardingBusy(true);
+    setOnboardingError(null);
+    try {
+      await setOnboardingComplete(true);
+      setNeedsOnboarding(false);
+    } catch (error) {
+      setOnboardingError(String(error));
+    } finally {
+      setOnboardingBusy(false);
+    }
+  }
+
   return (
     <ErrorBoundary>
       <main className="hybrid-shell">
-        <section className="zen-canvas" onClick={onZenCanvasClick}>
-          <ChatPanel selectedNodeIds={scopeNodeIds} scope={assemblerScope} />
-        </section>
+        {!onboardingResolved ? (
+          <section className="onboarding-shell">
+            <div className="onboarding-card onboarding-loading-card">
+              <h1>Loading MindVault...</h1>
+              <p>Checking onboarding status.</p>
+            </div>
+          </section>
+        ) : null}
+        {onboardingResolved && needsOnboarding ? (
+          <OnboardingShell
+            onComplete={completeOnboardingShell}
+            onSkip={skipOnboardingShell}
+            busy={onboardingBusy}
+            errorMessage={onboardingError}
+          />
+        ) : null}
+        {onboardingResolved && needsOnboarding ? null : (
+          <>
+            <section className="zen-canvas" onClick={onZenCanvasClick}>
+              <ChatPanel selectedNodeIds={scopeNodeIds} scope={assemblerScope} />
+            </section>
 
-        <div
-          className={`hover-zone left-zone ${leftPaneExpanded ? "expanded" : ""}`}
-          onMouseEnter={() => setLeftPaneVisible(true)}
-          onMouseLeave={() => setLeftPaneVisible(false)}
-        >
-          <div className="edge-trigger left" />
-          <div className={`pane-wrap left ${leftPaneExpanded ? "show" : ""}`}>
-            {!selectedVaultId ? (
-              <VaultSidebar
-                selectedVaultId={selectedVaultId}
-                onSelectVault={onSelectVault}
-                onSelectNode={onSelectNode}
-                onVaultCreated={onVaultCreated}
-                onVaultDeleted={onVaultDeleted}
-                onOpenDashboard={onOpenDashboard}
-                onOpenSettings={onOpenSettings}
-                refreshKey={vaultRefreshKey}
-                isRedactedUnlocked={isRedactedUnlocked}
-                setIsRedactedUnlocked={setIsRedactedUnlocked}
-              />
-            ) : (
-              <NodeList
-                selectedVaultId={selectedVaultId}
-                selectedNodeId={selectedNodeId}
-                onSelectNode={onSelectNode}
-                onNodeCreated={onNodeCreated}
-                onBack={() => {
-                  setSelectedVaultId(null);
-                  setSelectedNodeId(null);
-                }}
-                refreshKey={nodeRefreshKey}
-              />
-            )}
-          </div>
-        </div>
-
-        <div
-          className={`hover-zone right-zone ${rightPaneVisible ? "expanded" : ""}`}
-          onMouseEnter={() => setRightPaneVisible(true)}
-          onMouseLeave={() => setRightPaneVisible(false)}
-        >
-          <div className={`pane-wrap right ${rightPaneVisible ? "show" : ""}`}>
-            {showDashboard ? (
-              <DecayDashboard refreshKey={nodeRefreshKey} />
-            ) : showSettings ? (
-              <LlmSettings />
-            ) : (
-              <div className="right-pane-stack">
-                <ScopeIndicator
-                  selectedNodeIds={scopeNodeIds}
-                  scope={assemblerScope}
-                  onScopeChange={setAssemblerScope}
-                />
-                <ActiveMemoryPanel selectedNodeIds={scopeNodeIds} />
-                <NodeEditor
-                  selectedNodeId={selectedNodeId}
-                  onNodeDeleted={onNodeDeleted}
-                  onSaveSuccess={() => setNodeRefreshKey((value) => value + 1)}
-                  refreshKey={nodeRefreshKey}
-                  isRedactedUnlocked={isRedactedUnlocked}
-                  setIsRedactedUnlocked={setIsRedactedUnlocked}
-                />
+            <div
+              className={`hover-zone left-zone ${leftPaneExpanded ? "expanded" : ""}`}
+              onMouseEnter={() => setLeftPaneVisible(true)}
+              onMouseLeave={() => setLeftPaneVisible(false)}
+            >
+              <div className="edge-trigger left" />
+              <div className={`pane-wrap left ${leftPaneExpanded ? "show" : ""}`}>
+                {!selectedVaultId ? (
+                  <VaultSidebar
+                    selectedVaultId={selectedVaultId}
+                    onSelectVault={onSelectVault}
+                    onSelectNode={onSelectNode}
+                    onVaultCreated={onVaultCreated}
+                    onVaultDeleted={onVaultDeleted}
+                    onOpenDashboard={onOpenDashboard}
+                    onOpenSettings={onOpenSettings}
+                    refreshKey={vaultRefreshKey}
+                    isRedactedUnlocked={isRedactedUnlocked}
+                    setIsRedactedUnlocked={setIsRedactedUnlocked}
+                  />
+                ) : (
+                  <NodeList
+                    selectedVaultId={selectedVaultId}
+                    selectedNodeId={selectedNodeId}
+                    onSelectNode={onSelectNode}
+                    onNodeCreated={onNodeCreated}
+                    onBack={() => {
+                      setSelectedVaultId(null);
+                      setSelectedNodeId(null);
+                    }}
+                    refreshKey={nodeRefreshKey}
+                  />
+                )}
               </div>
-            )}
-          </div>
-          <div className="edge-trigger right" />
-        </div>
+            </div>
+
+            <div
+              className={`hover-zone right-zone ${rightPaneVisible ? "expanded" : ""}`}
+              onMouseEnter={() => setRightPaneVisible(true)}
+              onMouseLeave={() => setRightPaneVisible(false)}
+            >
+              <div className={`pane-wrap right ${rightPaneVisible ? "show" : ""}`}>
+                {showDashboard ? (
+                  <DecayDashboard refreshKey={nodeRefreshKey} />
+                ) : showSettings ? (
+                  <LlmSettings />
+                ) : (
+                  <div className="right-pane-stack">
+                    <ScopeIndicator
+                      selectedNodeIds={scopeNodeIds}
+                      scope={assemblerScope}
+                      onScopeChange={setAssemblerScope}
+                    />
+                    <ActiveMemoryPanel selectedNodeIds={scopeNodeIds} />
+                    <NodeEditor
+                      selectedNodeId={selectedNodeId}
+                      onNodeDeleted={onNodeDeleted}
+                      onSaveSuccess={() => setNodeRefreshKey((value) => value + 1)}
+                      refreshKey={nodeRefreshKey}
+                      isRedactedUnlocked={isRedactedUnlocked}
+                      setIsRedactedUnlocked={setIsRedactedUnlocked}
+                    />
+                  </div>
+                )}
+              </div>
+              <div className="edge-trigger right" />
+            </div>
+          </>
+        )}
       </main>
     </ErrorBoundary>
   );
