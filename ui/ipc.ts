@@ -53,6 +53,22 @@ export function dbPing() {
   return invokeTyped<string>("db_ping");
 }
 
+export function settingsGet(key: string) {
+  return invokeTyped<string | null>("settings_get", { key });
+}
+
+export function settingsSet(key: string, value: string) {
+  return invokeTyped<boolean>("settings_set", { key, value });
+}
+
+export function onboardingGetComplete() {
+  return settingsGet("onboarding_complete");
+}
+
+export function onboardingSetComplete(isComplete: boolean) {
+  return settingsSet("onboarding_complete", JSON.stringify(isComplete));
+}
+
 export function chatGetHistory() {
   return invokeTyped<ChatMessage[]>("chat_get_history");
 }

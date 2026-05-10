@@ -446,6 +446,44 @@ fn db_ping(state: tauri::State<'_, DbState>) -> IpcResponse<String> {
 }
 
 #[tauri::command]
+fn settings_get(key: String, state: tauri::State<'_, DbState>) -> IpcResponse<Option<String>> {
+    into_ipc((|| {
+        let conn = open_connection(&state.db_path)?;
+        conn.query_row(
+            "SELECT value FROM settings WHERE key = ?1 LIMIT 1;",
+            [key],
+            |row| row.get::<_, String>(0),
+        )
+        .map(Some)
+        .or_else(|err| {
+            if matches!(err, rusqlite::Error::QueryReturnedNoRows) {
+                Ok(None)
+            } else {
+                Err(format!("Failed reading setting: {err}"))
+            }
+        })
+    })())
+}
+
+#[tauri::command]
+fn settings_set(key: String, value: String, state: tauri::State<'_, DbState>) -> IpcResponse<bool> {
+    into_ipc((|| {
+        let conn = open_connection(&state.db_path)?;
+        conn.execute(
+            "INSERT INTO settings (key, value, scope, updated_at)
+             VALUES (?1, ?2, 'global', datetime('now'))
+             ON CONFLICT(key) DO UPDATE
+             SET value = excluded.value,
+                 scope = excluded.scope,
+                 updated_at = datetime('now');",
+            params![key, value],
+        )
+        .map_err(|err| format!("Failed writing setting: {err}"))?;
+        Ok(true)
+    })())
+}
+
+#[tauri::command]
 fn chat_get_history(state: tauri::State<'_, AppState>) -> IpcResponse<Vec<ChatMessage>> {
     into_ipc((|| {
         let conn = open_connection(&state.db_path)?;
@@ -1343,6 +1381,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             greet,
             db_ping,
+            settings_get,
+            settings_set,
             chat_get_history,
             chat_append_message,
             chat_clear_history,
