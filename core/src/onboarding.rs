@@ -144,6 +144,19 @@ pub fn build_onboarding_extraction_user_message(answers_json: &str) -> String {
     )
 }
 
+/// After fence removal, strip a leading `json` language token when it appears on the same line as
+/// the payload (e.g. `` ```json {"proposals":...} ``` `` with no newline after `json`).
+fn strip_leading_json_fence_language_tag(text: &str) -> String {
+    let text = text.trim();
+    if text.len() >= 4 && text[..4].eq_ignore_ascii_case("json") {
+        let rest = text[4..].trim_start();
+        if rest.starts_with('{') || rest.starts_with('[') {
+            return rest.trim().to_string();
+        }
+    }
+    text.to_string()
+}
+
 /// Trim optional ```json ... ``` wrappers from model output before parsing.
 pub fn normalize_llm_json_response(raw: &str) -> String {
     let mut s = raw.trim().to_string();
@@ -159,7 +172,7 @@ pub fn normalize_llm_json_response(raw: &str) -> String {
             s = inner.to_string();
         }
     }
-    s.trim().to_string()
+    strip_leading_json_fence_language_tag(&s)
 }
 
 /// Parse proposals JSON after optional markdown fence stripping (what LLMs often emit).
@@ -329,6 +342,21 @@ mod tests {
         let normalized = normalize_llm_json_response(raw);
         assert!(normalized.starts_with('{') && normalized.ends_with('}'));
         assert!(!normalized.contains("```"));
+    }
+
+    #[test]
+    fn normalize_llm_json_response_strips_json_prefix_when_same_line_as_payload() {
+        let raw = "```json {\"proposals\":[{\"title\":\"A\",\"summary\":\"B\",\"category\":\"personal\"}]} ```";
+        let normalized = normalize_llm_json_response(raw);
+        assert!(
+            normalized.starts_with('{'),
+            "expected raw JSON object, got: {normalized:?}"
+        );
+        assert!(
+            !normalized[..normalized.len().min(12)].contains("json"),
+            "leading json token should be removed"
+        );
+        parse_proposals_json(&normalized).expect("parse proposals after same-line json prefix");
     }
 
     #[test]
