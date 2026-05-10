@@ -148,13 +148,21 @@ pub fn build_onboarding_extraction_user_message(answers_json: &str) -> String {
 /// the payload (e.g. `` ```json {"proposals":...} ``` `` with no newline after `json`).
 fn strip_leading_json_fence_language_tag(text: &str) -> String {
     let text = text.trim();
-    if text.len() >= 4 && text[..4].eq_ignore_ascii_case("json") {
-        let rest = text[4..].trim_start();
-        if rest.starts_with('{') || rest.starts_with('[') {
-            return rest.trim().to_string();
-        }
+    let Some(head) = text.as_bytes().get(..4) else {
+        return text.to_string();
+    };
+    if !head.eq_ignore_ascii_case(b"json") {
+        return text.to_string();
     }
-    text.to_string()
+    let Some(rest) = text.get(4..) else {
+        return text.to_string();
+    };
+    let rest = rest.trim_start();
+    if rest.starts_with('{') || rest.starts_with('[') {
+        rest.trim().to_string()
+    } else {
+        text.to_string()
+    }
 }
 
 /// Trim optional ```json ... ``` wrappers from model output before parsing.
@@ -357,6 +365,18 @@ mod tests {
             "leading json token should be removed"
         );
         parse_proposals_json(&normalized).expect("parse proposals after same-line json prefix");
+    }
+
+    #[test]
+    fn normalize_llm_json_response_no_panic_when_byte_four_not_char_boundary() {
+        // First glyph is 3 UTF-8 bytes; second is 2 bytes — byte index 4 splits the second char,
+        // so `text[..4]` would panic; normalization must stay panic-free on odd prefixes.
+        let s = "\u{0800}\u{0410}{\"proposals\":[]}";
+        let normalized = normalize_llm_json_response(s);
+        assert!(
+            normalized.contains("proposals"),
+            "unexpected normalization: {normalized:?}"
+        );
     }
 
     #[test]
