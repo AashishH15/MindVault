@@ -173,7 +173,10 @@ function OnboardingShell({ onComplete, onSkip, busy, errorMessage }: OnboardingS
     setModels([]);
     setStatusMessage(null);
     setHasExtracted(false);
-    setSelectedModel(getLlmModel(nextProvider));
+
+    const restoredModel = getLlmModel(nextProvider);
+    setSelectedModelState(restoredModel);
+    setLlmModel(nextProvider, restoredModel);
   }
 
   function setSelectedModel(nextModel: string) {
