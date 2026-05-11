@@ -199,11 +199,13 @@ function OnboardingShell({ onComplete, onSkip, busy, errorMessage }: OnboardingS
     setLlmProvider(nextProvider);
     setModels([]);
     setStatusMessage(null);
+    setHasExtracted(false);
   }
 
   function setSelectedModel(nextModel: string) {
     setSelectedModelState(nextModel);
     setLlmModel(nextModel);
+    setHasExtracted(false);
   }
 
   function onAnswerChange(field: keyof BasicsAnswers, value: string) {
@@ -422,10 +424,7 @@ function OnboardingShell({ onComplete, onSkip, busy, errorMessage }: OnboardingS
                 <span>Model</span>
                 <select
                   value={selectedModel}
-                  onChange={(event) => {
-                    setSelectedModel(event.target.value);
-                    setHasExtracted(false);
-                  }}
+                  onChange={(event) => setSelectedModel(event.target.value)}
                   disabled={shellBusy}
                 >
                   <option value="">
