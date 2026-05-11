@@ -173,6 +173,7 @@ function OnboardingShell({ onComplete, onSkip, busy, errorMessage }: OnboardingS
     setModels([]);
     setStatusMessage(null);
     setHasExtracted(false);
+    setSelectedModel("");
   }
 
   function setSelectedModel(nextModel: string) {
