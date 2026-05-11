@@ -173,12 +173,12 @@ function OnboardingShell({ onComplete, onSkip, busy, errorMessage }: OnboardingS
     setModels([]);
     setStatusMessage(null);
     setHasExtracted(false);
-    setSelectedModel("");
+    setSelectedModel(getLlmModel(nextProvider));
   }
 
   function setSelectedModel(nextModel: string) {
     setSelectedModelState(nextModel);
-    setLlmModel(nextModel);
+    setLlmModel(provider, nextModel);
     setHasExtracted(false);
   }
 
@@ -404,6 +404,9 @@ function OnboardingShell({ onComplete, onSkip, busy, errorMessage }: OnboardingS
                       ? "Use saved model or fetch available models"
                       : "Select model"}
                   </option>
+                  {selectedModel && !models.includes(selectedModel) ? (
+                    <option value={selectedModel}>{selectedModel} (Saved)</option>
+                  ) : null}
                   {models.map((model) => (
                     <option key={model} value={model}>
                       {model}
