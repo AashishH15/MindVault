@@ -109,6 +109,8 @@ function buildAnswersJson(answers: BasicsAnswers): string {
   return JSON.stringify(payload, null, 2);
 }
 
+type StatusMessage = { text: string; kind: "info" | "error" };
+
 function OnboardingShell({ onComplete, onSkip, busy, errorMessage }: OnboardingShellProps) {
   const [currentStep, setCurrentStep] = useState(0);
   const [answers, setAnswers] = useState<BasicsAnswers>({
@@ -124,7 +126,7 @@ function OnboardingShell({ onComplete, onSkip, busy, errorMessage }: OnboardingS
   const [lmStudioEndpoint, setLmStudioEndpointState] = useState(() => getLmStudioEndpoint());
   const [selectedModel, setSelectedModelState] = useState(() => getLlmModel());
   const [models, setModels] = useState<string[]>([]);
-  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [statusMessage, setStatusMessage] = useState<StatusMessage | null>(null);
   const [llmBusy, setLlmBusy] = useState(false);
   const [extractBusy, setExtractBusy] = useState(false);
   const [hasExtracted, setHasExtracted] = useState(false);
@@ -197,15 +199,21 @@ function OnboardingShell({ onComplete, onSkip, busy, errorMessage }: OnboardingS
       const fetchedModels = await getLlmModels(provider, endpoint.trim());
       setModels(fetchedModels);
       if (fetchedModels.length === 0) {
-        setStatusMessage("Connected, but no models were returned.");
+        setStatusMessage({ text: "Connected, but no models were returned.", kind: "error" });
       } else {
         const nextModel =
           selectedModel && fetchedModels.includes(selectedModel) ? selectedModel : fetchedModels[0];
         setSelectedModel(nextModel);
-        setStatusMessage(`Connected. Found ${fetchedModels.length} model(s).`);
+        setStatusMessage({
+          text: `Connected. Found ${fetchedModels.length} model(s).`,
+          kind: "info",
+        });
       }
     } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : String(error));
+      setStatusMessage({
+        text: error instanceof Error ? error.message : String(error),
+        kind: "error",
+      });
     } finally {
       setLlmBusy(false);
     }
@@ -216,17 +224,17 @@ function OnboardingShell({ onComplete, onSkip, busy, errorMessage }: OnboardingS
     if (provider === "ollama") {
       setOllamaEndpoint(ollamaEndpoint);
       setOllamaEndpointState(getOllamaEndpoint());
-      setStatusMessage("Saved Ollama settings.");
+      setStatusMessage({ text: "Saved Ollama settings.", kind: "info" });
     } else {
       setLmStudioEndpoint(lmStudioEndpoint);
       setLmStudioEndpointState(getLmStudioEndpoint());
-      setStatusMessage("Saved LM Studio settings.");
+      setStatusMessage({ text: "Saved LM Studio settings.", kind: "info" });
     }
   }
 
   async function runExtractionOnce() {
     if (!canRunExtraction) {
-      setStatusMessage("Configure endpoint + model before extraction.");
+      setStatusMessage({ text: "Configure endpoint + model before extraction.", kind: "error" });
       return false;
     }
     if (
@@ -235,7 +243,10 @@ function OnboardingShell({ onComplete, onSkip, busy, errorMessage }: OnboardingS
       !answers.workContext.trim() &&
       !answers.interests.trim()
     ) {
-      setStatusMessage("Fill at least one Basics answer before extraction.");
+      setStatusMessage({
+        text: "Fill at least one Basics answer before extraction.",
+        kind: "error",
+      });
       return false;
     }
 
@@ -247,10 +258,16 @@ function OnboardingShell({ onComplete, onSkip, busy, errorMessage }: OnboardingS
       );
       setStagedProposals(extracted);
       setHasExtracted(true);
-      setStatusMessage(`Extraction complete. Staged ${extracted.length} proposal(s).`);
+      setStatusMessage({
+        text: `Extraction complete. Staged ${extracted.length} proposal(s).`,
+        kind: "info",
+      });
       return true;
     } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : String(error));
+      setStatusMessage({
+        text: error instanceof Error ? error.message : String(error),
+        kind: "error",
+      });
       return false;
     } finally {
       setExtractBusy(false);
@@ -459,7 +476,11 @@ function OnboardingShell({ onComplete, onSkip, busy, errorMessage }: OnboardingS
               </p>
             </div>
           ) : null}
-          {statusMessage ? <p className="onboarding-hint">{statusMessage}</p> : null}
+          {statusMessage ? (
+            <p className={statusMessage.kind === "error" ? "onboarding-error" : "onboarding-hint"}>
+              {statusMessage.text}
+            </p>
+          ) : null}
           {errorMessage ? <p className="onboarding-error">{errorMessage}</p> : null}
         </div>
 
