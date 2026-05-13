@@ -1270,10 +1270,10 @@ fn node_touch(node_id: String, state: tauri::State<'_, DbState>) -> IpcResponse<
             serde_json::from_str(&priority_json_str).unwrap_or_else(|_| serde_json::json!({}));
 
         let current_touches = priority_obj
-            .get("today_touches")
+            .get("session_touches")
             .and_then(|v| v.as_u64())
             .unwrap_or(0);
-        priority_obj["today_touches"] = serde_json::json!(current_touches + 1);
+        priority_obj["session_touches"] = serde_json::json!(current_touches + 1);
 
         let updated_json = serde_json::to_string(&priority_obj)
             .map_err(|err| format!("Failed serializing priority for node {node_id}: {err}"))?;
@@ -1595,11 +1595,11 @@ fn run_priority_refresh(db_path: &std::path::Path) -> Result<usize, String> {
     for (_, vault_id, priority_json_str) in &rows {
         let priority_obj: serde_json::Value =
             serde_json::from_str(priority_json_str).unwrap_or_else(|_| serde_json::json!({}));
-        let today_touches = priority_obj
-            .get("today_touches")
+        let session_touches = priority_obj
+            .get("session_touches")
             .and_then(|v| v.as_u64())
             .unwrap_or(0);
-        if today_touches > 0 {
+        if session_touches > 0 {
             active_vaults.insert(vault_id.clone());
         }
     }
