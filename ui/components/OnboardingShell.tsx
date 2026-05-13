@@ -22,7 +22,7 @@ type OnboardingShellProps = {
   errorMessage: string | null;
 };
 
-const STEPS = ["Basics", "LLM setup", "Review", "Done"] as const;
+const STEPS = ["Basics", "LLM setup", "Review"] as const;
 
 type Provider = "ollama" | "lmstudio";
 
@@ -71,10 +71,7 @@ function stepDescription(step: number, stagedCount: number): string {
   if (step === 1) {
     return "Configure the same provider/endpoint/model used by chat. Extraction runs when you move to Review.";
   }
-  if (step === 2) {
-    return `Review/edit staged proposals before commit. Currently staged: ${stagedCount}.`;
-  }
-  return "Extraction is complete for this run. Finish onboarding to open MindVault.";
+  return `Review/edit staged proposals before commit. Currently staged: ${stagedCount}.`;
 }
 
 /** Seed + migration vault IDs — used when `vault_list` names are not loaded yet. */
@@ -659,17 +656,7 @@ function OnboardingShell({ onComplete, onSkip, busy, errorMessage }: OnboardingS
               )}
             </div>
           ) : null}
-          {currentStep === 3 ? (
-            <div className="onboarding-done-note">
-              <p>
-                Extraction run: <strong>{hasExtracted ? "yes" : "no"}</strong>
-              </p>
-              <p>
-                Staged proposals: <strong>{stagedProposals.length}</strong> (no database writes
-                yet).
-              </p>
-            </div>
-          ) : null}
+
           {statusMessage ? (
             <p className={statusMessage.kind === "error" ? "onboarding-error" : "onboarding-hint"}>
               {statusMessage.text}
@@ -682,25 +669,14 @@ function OnboardingShell({ onComplete, onSkip, busy, errorMessage }: OnboardingS
           <button type="button" onClick={goBack} disabled={currentStep === 0 || shellBusy}>
             Back
           </button>
-          {isLastStep ? (
-            <button
-              type="button"
-              className="primary"
-              onClick={() => void onComplete()}
-              disabled={shellBusy}
-            >
-              Finish onboarding
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="primary"
-              onClick={() => void goNext()}
-              disabled={shellBusy}
-            >
-              {currentStep === 2 ? "Commit and finish onboarding" : "Next"}
-            </button>
-          )}
+          <button
+            type="button"
+            className="primary"
+            onClick={() => void goNext()}
+            disabled={shellBusy || (isLastStep && unresolvedCount > 0)}
+          >
+            {isLastStep ? "Commit and finish onboarding" : "Next"}
+          </button>
         </footer>
       </div>
     </section>
