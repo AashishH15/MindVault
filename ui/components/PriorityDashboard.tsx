@@ -215,12 +215,8 @@ function PriorityDashboard({ refreshKey }: PriorityDashboardProps) {
         )}
         {sorted.map((node) => {
           const score = getPriorityScore(node);
-          const count30 =
-            getAccessCount(node, "access_count_30active") ||
-            getAccessCount(node, "access_count_30d");
-          const count90 =
-            getAccessCount(node, "access_count_90active") ||
-            getAccessCount(node, "access_count_90d");
+          const count30 = getAccessCount(node, "access_count_30active") || 0;
+          const count90 = getAccessCount(node, "access_count_90active") || 0;
           const currentProfile = profileOverrides[node.id] ?? getPriorityProfile(node);
           const frozen = frozenOverrides[node.id] ?? isFrozen(node);
           return (
