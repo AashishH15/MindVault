@@ -100,13 +100,24 @@ fn minimal_pre_write_backup(db_path: &Path, reason: &str) -> Result<PathBuf, Str
         .map_err(|err| format!("System clock before UNIX_EPOCH: {err}"))?
         .as_secs();
     let backup_path = backups_dir.join(format!("mindvault-pre-{reason}-{now_unix}.db"));
-    fs::copy(db_path, &backup_path).map_err(|err| {
-        format!(
-            "Failed creating pre-write backup {} -> {}: {err}",
-            db_path.display(),
-            backup_path.display()
-        )
-    })?;
+
+    let conn =
+        Connection::open(db_path).map_err(|err| format!("Failed to open DB for backup: {err}"))?;
+
+    let backup_path_str = backup_path
+        .to_str()
+        .ok_or("Backup path is not valid UTF-8")?
+        .replace('\'', "''");
+
+    conn.execute(&format!("VACUUM INTO '{}'", backup_path_str), [])
+        .map_err(|err| {
+            format!(
+                "Failed creating pre-write backup {} -> {}: {err}",
+                db_path.display(),
+                backup_path.display()
+            )
+        })?;
+
     Ok(backup_path)
 }
 
