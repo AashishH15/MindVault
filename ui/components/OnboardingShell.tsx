@@ -575,7 +575,7 @@ function OnboardingShell({ onComplete, onSkip, busy, errorMessage }: OnboardingS
                 </p>
               ) : (
                 stagedProposals.map((proposal, index) => (
-                  <article key={`${proposal.rowId}-${index}`} className="onboarding-proposal-card">
+                  <article key={proposal.rowId} className="onboarding-proposal-card">
                     <div className="onboarding-proposal-header">
                       <h3>Proposal {index + 1}</h3>
                       <small>{proposal.nodeType || "concept"}</small>
