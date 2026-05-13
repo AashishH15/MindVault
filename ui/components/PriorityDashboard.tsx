@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   getAllNodes,
+  getNode,
   optimizeAllPriorityProfiles,
   refreshAllPriorityScores,
   updateNode,
@@ -116,7 +117,9 @@ function PriorityDashboard({ refreshKey }: PriorityDashboardProps) {
     saveTimersRef.current[node.id] = window.setTimeout(() => {
       void (async () => {
         try {
-          const priorityObj = parsePriorityJson(node.priority);
+          const freshNode = await getNode(node.id);
+          if (!freshNode) return;
+          const priorityObj = parsePriorityJson(freshNode.priority);
           priorityObj.profile = nextProfile;
           priorityObj.pinned = nextProfile === "pinned";
           await updateNode({
@@ -144,7 +147,9 @@ function PriorityDashboard({ refreshKey }: PriorityDashboardProps) {
 
     void (async () => {
       try {
-        const priorityObj = parsePriorityJson(node.priority);
+        const freshNode = await getNode(node.id);
+        if (!freshNode) return;
+        const priorityObj = parsePriorityJson(freshNode.priority);
         priorityObj.frozen = nextFrozen;
         await updateNode({
           id: node.id,
