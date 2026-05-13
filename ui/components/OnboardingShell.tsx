@@ -192,7 +192,9 @@ function OnboardingShell({ onComplete, onSkip, busy, errorMessage }: OnboardingS
         }
         const next: Record<string, string> = {};
         for (const vault of vaults) {
-          next[vault.id] = vault.name;
+          if (!vault.parentVaultId) {
+            next[vault.id] = vault.name;
+          }
         }
         setVaultNameById(next);
       } catch {
