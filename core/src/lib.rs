@@ -1454,37 +1454,23 @@ fn onboarding_commit(
     state: tauri::State<'_, DbState>,
 ) -> IpcResponse<bool> {
     into_ipc((|| {
-        if !proposals.is_empty() {
-            let _ = minimal_pre_write_backup(&state.db_path, "onboarding-commit")?;
-        }
-
-        let mut conn = open_connection(&state.db_path)?;
-        let tx = conn
-            .transaction()
-            .map_err(|err| format!("Failed starting onboarding_commit transaction: {err}"))?;
-
+        // 1. Validate all proposals first
         for proposal in &proposals {
             let vault_id = proposal.vault_id.trim();
             if vault_id.is_empty() {
                 return Err("Onboarding commit row is missing vault_id".to_string());
             }
-            ensure_onboarding_vault_exists(&tx, vault_id)?;
-            let vault = fetch_vault_by_id(&tx, vault_id)?;
-            let (resolved_vault_id, resolved_sub_vault_id) = match vault.parent_vault_id {
-                Some(parent_id) => (parent_id, Some(vault.id)),
-                None => (vault.id, None),
-            };
 
             let title = proposal.title.trim();
             if title.is_empty() {
                 return Err("Onboarding commit row has empty title".to_string());
             }
+
             let summary = proposal.summary.trim();
             if summary.is_empty() {
                 return Err("Onboarding commit row has empty summary".to_string());
             }
 
-            let node_id = generate_id(&tx, "node")?;
             let node_type = proposal
                 .node_type
                 .as_deref()
@@ -1530,6 +1516,44 @@ fn onboarding_commit(
                     source_type, valid_source_types
                 ));
             }
+        }
+
+        // 2. Take pre-write backup (expensive, only run if payload is completely valid)
+        if !proposals.is_empty() {
+            let _ = minimal_pre_write_backup(&state.db_path, "onboarding-commit")?;
+        }
+
+        let mut conn = open_connection(&state.db_path)?;
+        let tx = conn
+            .transaction()
+            .map_err(|err| format!("Failed starting onboarding_commit transaction: {err}"))?;
+
+        // 3. Process and write
+        for proposal in &proposals {
+            let vault_id = proposal.vault_id.trim();
+            if vault_id.is_empty() {
+                return Err("Onboarding commit row is missing vault_id".to_string());
+            }
+            ensure_onboarding_vault_exists(&tx, vault_id)?;
+            let vault = fetch_vault_by_id(&tx, vault_id)?;
+            let (resolved_vault_id, resolved_sub_vault_id) = match vault.parent_vault_id {
+                Some(parent_id) => (parent_id, Some(vault.id)),
+                None => (vault.id, None),
+            };
+
+            let node_type = proposal
+                .node_type
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or("concept");
+
+            let source_type = proposal
+                .source_type
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or("onboarding");
             let detail = proposal
                 .detail
                 .as_deref()
@@ -1537,6 +1561,8 @@ fn onboarding_commit(
                 .filter(|value| !value.is_empty())
                 .map(|value| value.to_string());
             let priority_json = priority::DEFAULT_PRIORITY_JSON;
+
+            let node_id = generate_id(&tx, "node")?;
 
             tx.execute(
                 "INSERT INTO nodes (
@@ -1548,8 +1574,8 @@ fn onboarding_commit(
                     resolved_vault_id,
                     resolved_sub_vault_id,
                     node_type,
-                    title,
-                    summary,
+                    proposal.title.trim(),
+                    proposal.summary.trim(),
                     detail,
                     Some("onboarding_wizard"),
                     source_type,
