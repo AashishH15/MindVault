@@ -16,17 +16,6 @@
   background: rgba(143, 184, 255, 0.16);
 }
 
-.vault-search {
-  width: 100%;
-  margin: 0 0 12px;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  border-radius: 10px;
-  background: rgba(5, 8, 14, 0.55);
-  color: #eff3ff;
-  padding: 8px 10px;
-  font-size: 0.9rem;
-}
-
 /* Search result count badge */
 
 .search-result-count {
@@ -176,6 +165,10 @@
   cursor: pointer;
   min-width: 0;
   flex: 1;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.06);
+  color: #eaf0ff;
+  border-radius: 10px;
 }
 
 .list-title-row {

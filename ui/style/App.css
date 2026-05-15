@@ -141,15 +141,11 @@
   color: #c6cde4;
 }
 
-.pane-header button,
-.list-main {
+.pane-header button {
   border: 1px solid rgba(255, 255, 255, 0.15);
   background: rgba(255, 255, 255, 0.06);
   color: #eaf0ff;
   border-radius: 10px;
-}
-
-.pane-header button {
   padding: 8px 16px;
   cursor: pointer;
   display: inline-flex;
