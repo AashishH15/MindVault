@@ -13,7 +13,10 @@ import type { ContextAssemblerScope } from "./constants/contextBudget";
 import { refreshAllPriorityScores } from "./services/nodes";
 import { DEV_ONBOARDING_CHANGED } from "./constants/devEvents";
 import { getOnboardingComplete, setOnboardingComplete } from "./services/settings";
-import "./App.css";
+import "./style/App.css";
+import "./style/components/ActiveMemoryPanel.css";
+import "./style/components/ChatPanel.css";
+import "./style/components/ErrorBoundary.css";
 
 function App() {
   const [onboardingResolved, setOnboardingResolved] = useState<boolean>(false);
