@@ -1584,6 +1584,39 @@ fn onboarding_commit(
                 ],
             )
             .map_err(|err| format!("Failed inserting onboarding node: {err}"))?;
+
+            if let Some(tags) = &proposal.tags {
+                for tag_name in tags {
+                    let clean_name = tag_name.trim();
+                    if clean_name.is_empty() {
+                        continue;
+                    }
+
+                    let tag_id = match tx.query_row(
+                        "SELECT id FROM tags WHERE name = ?1;",
+                        [clean_name],
+                        |row| row.get::<_, String>(0),
+                    ) {
+                        Ok(id) => id,
+                        Err(rusqlite::Error::QueryReturnedNoRows) => {
+                            let new_id = generate_id(&tx, "tag")?;
+                            tx.execute(
+                                "INSERT INTO tags (id, name, color) VALUES (?1, ?2, NULL);",
+                                params![new_id, clean_name],
+                            )
+                            .map_err(|err| format!("Failed inserting tag: {err}"))?;
+                            new_id
+                        }
+                        Err(err) => return Err(format!("Failed querying tag: {err}")),
+                    };
+
+                    tx.execute(
+                        "INSERT OR IGNORE INTO node_tags (node_id, tag_id) VALUES (?1, ?2);",
+                        params![&node_id, &tag_id],
+                    )
+                    .map_err(|err| format!("Failed inserting node tag: {err}"))?;
+                }
+            }
         }
 
         tx.execute(
