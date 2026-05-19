@@ -13,7 +13,7 @@ import type { ContextAssemblerScope } from "./constants/contextBudget";
 import { refreshAllPriorityScores } from "./services/nodes";
 import { DEV_ONBOARDING_CHANGED } from "./constants/devEvents";
 import { getOnboardingComplete, setOnboardingComplete } from "./services/settings";
-import "./App.css";
+import "./style/MonoStyles.css";
 
 function App() {
   const [onboardingResolved, setOnboardingResolved] = useState<boolean>(false);
@@ -151,16 +151,9 @@ function App() {
   }
 
   async function completeOnboardingShell() {
-    setOnboardingBusy(true);
-    setOnboardingError(null);
-    try {
-      await setOnboardingComplete(true);
-      setNeedsOnboarding(false);
-    } catch (error) {
-      setOnboardingError(String(error));
-    } finally {
-      setOnboardingBusy(false);
-    }
+    // onboardingCommit already sets onboarding_complete = true atomically in the DB.
+    // Treat the commit as the sole source of truth and only update local React state here.
+    setNeedsOnboarding(false);
   }
 
   async function skipOnboardingShell() {
