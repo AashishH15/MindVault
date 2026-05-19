@@ -7,7 +7,7 @@ import {
   getChatHistory,
   type ChatMessage,
 } from "../services/chat";
-import { chatWithScope, getLlmModels } from "../services/nodes";
+import { chatWithScope } from "../services/nodes";
 import { getSetting } from "../services/settings";
 import { listVaults } from "../services/vaults";
 import {
@@ -15,8 +15,9 @@ import {
   getLlmProvider,
   getLmStudioEndpoint,
   getOllamaEndpoint,
-  setLlmModel,
-  setLlmProvider,
+  getLlmMode,
+  setLlmMode,
+  getApiKey,
 } from "../utils/settings";
 
 type ChatPanelProps = {
@@ -24,9 +25,16 @@ type ChatPanelProps = {
   scope: ContextAssemblerScope;
   selectedVaultId: string | null;
   onSelectVault: (vaultId: string | null) => void;
+  onOpenSettings?: () => void;
 };
 
-function ChatPanel({ selectedNodeIds, scope, selectedVaultId, onSelectVault }: ChatPanelProps) {
+function ChatPanel({
+  selectedNodeIds,
+  scope,
+  selectedVaultId,
+  onSelectVault,
+  onOpenSettings,
+}: ChatPanelProps) {
   const MAX_RENDERED_MESSAGES = 120;
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
@@ -41,7 +49,7 @@ function ChatPanel({ selectedNodeIds, scope, selectedVaultId, onSelectVault }: C
   );
   const [currentProvider, setCurrentProvider] = useState(() => getLlmProvider());
   const [currentModel, setCurrentModel] = useState(() => getLlmModel());
-  const [localModels, setLocalModels] = useState<{ provider: string; name: string }[]>([]);
+  const [currentMode, setCurrentMode] = useState(() => getLlmMode());
   const [activeDropdown, setActiveDropdown] = useState<"vault" | "mode" | "model" | null>(null);
 
   const timeOfDay = useMemo(() => {
@@ -58,9 +66,17 @@ function ChatPanel({ selectedNodeIds, scope, selectedVaultId, onSelectVault }: C
   }, [selectedVaultId, vaults]);
 
   const activeModelDisplay = useMemo(() => {
-    if (currentProvider === "openai") return "GPT-4o (Cloud)";
-    if (currentProvider === "anthropic") return "Claude 3.5 (Cloud)";
-    return `${currentModel || "Pick Model"} (${currentProvider === "ollama" ? "Ollama" : "LM Studio"})`;
+    const isCloud = ["openai", "anthropic", "google", "xai"].includes(currentProvider);
+    if (isCloud) {
+      let niceName = currentProvider.charAt(0).toUpperCase() + currentProvider.slice(1);
+      if (currentProvider === "openai") niceName = "OpenAI";
+      if (currentProvider === "anthropic") niceName = "Anthropic";
+      if (currentProvider === "google") niceName = "Google Gemini";
+      if (currentProvider === "xai") niceName = "xAI Grok";
+      return `Cloud: ${currentModel || "Model"} (${niceName})`;
+    }
+    const niceName = currentProvider === "ollama" ? "Ollama" : "LM Studio";
+    return `Local: ${currentModel || "Model"} (${niceName})`;
   }, [currentProvider, currentModel]);
 
   useEffect(() => {
@@ -84,6 +100,7 @@ function ChatPanel({ selectedNodeIds, scope, selectedVaultId, onSelectVault }: C
     function handleSettingsChange() {
       setCurrentProvider(getLlmProvider());
       setCurrentModel(getLlmModel());
+      setCurrentMode(getLlmMode());
     }
     window.addEventListener("mindvault:llm-settings-changed", handleSettingsChange);
     return () => {
@@ -107,35 +124,6 @@ function ChatPanel({ selectedNodeIds, scope, selectedVaultId, onSelectVault }: C
       active = false;
     };
   }, [selectedVaultId]);
-
-  useEffect(() => {
-    let active = true;
-    void (async () => {
-      const detected: { provider: string; name: string }[] = [];
-      try {
-        const ollamaModels = await getLlmModels("ollama", getOllamaEndpoint());
-        for (const m of ollamaModels) {
-          detected.push({ provider: "ollama", name: m });
-        }
-      } catch (e) {
-        console.warn("Could not load Ollama models", e);
-      }
-      try {
-        const lmstudioModels = await getLlmModels("lmstudio", getLmStudioEndpoint());
-        for (const m of lmstudioModels) {
-          detected.push({ provider: "lmstudio", name: m });
-        }
-      } catch (e) {
-        console.warn("Could not load LM Studio models", e);
-      }
-      if (active) {
-        setLocalModels(detected);
-      }
-    })();
-    return () => {
-      active = false;
-    };
-  }, []);
 
   useEffect(() => {
     if (!activeDropdown) return;
@@ -214,6 +202,8 @@ function ChatPanel({ selectedNodeIds, scope, selectedVaultId, onSelectVault }: C
         endpoint = getLmStudioEndpoint();
       } else if (provider === "ollama") {
         endpoint = getOllamaEndpoint();
+      } else if (["openai", "anthropic", "google", "xai"].includes(provider)) {
+        endpoint = getApiKey(provider);
       }
       const model = getLlmModel();
 
@@ -294,12 +284,13 @@ function ChatPanel({ selectedNodeIds, scope, selectedVaultId, onSelectVault }: C
     setActiveDropdown(null);
   }
 
-  function handleSelectModel(provider: string, model: string) {
-    setLlmProvider(provider);
-    setLlmModel(provider, model);
-    setCurrentProvider(provider);
-    setCurrentModel(model);
+  function handleSelectModeSettings(mode: "local" | "cloud" | "hybrid") {
+    setLlmMode(mode);
+    setCurrentMode(mode);
     setActiveDropdown(null);
+    if (onOpenSettings) {
+      onOpenSettings();
+    }
   }
 
   if (messages.length === 0) {
@@ -452,65 +443,47 @@ function ChatPanel({ selectedNodeIds, scope, selectedVaultId, onSelectVault }: C
               </button>
               {activeDropdown === "model" && (
                 <div className="zen-dropdown models-dropdown">
-                  <div className="zen-dropdown-header">Select LLM Backend</div>
-                  <div className="zen-dropdown-section-title">Local Models (Secure)</div>
+                  <div className="zen-dropdown-header">Select Model Environment</div>
 
-                  {localModels.length === 0 ? (
-                    <div className="zen-dropdown-no-models">
-                      No local models detected. Check Ollama/LM Studio.
-                    </div>
-                  ) : (
-                    localModels.map((m) => (
-                      <button
-                        key={`${m.provider}-${m.name}`}
-                        type="button"
-                        className={`zen-dropdown-item ${
-                          currentProvider === m.provider && currentModel === m.name
-                            ? "selected"
-                            : ""
-                        }`}
-                        onClick={() => handleSelectModel(m.provider, m.name)}
-                      >
-                        <span className="item-icon">💻</span>
-                        <div className="item-details">
-                          <div className="item-title">{m.name}</div>
-                          <div className="item-desc">
-                            via {m.provider === "ollama" ? "Ollama" : "LM Studio"}
-                          </div>
-                        </div>
-                      </button>
-                    ))
-                  )}
-
-                  <div className="zen-dropdown-section-title">Cloud Models (Sync)</div>
                   <button
                     type="button"
-                    className={`zen-dropdown-item ${
-                      currentProvider === "openai" && currentModel === "gpt-5.4 mini"
-                        ? "selected"
-                        : ""
-                    }`}
-                    onClick={() => handleSelectModel("openai", "gpt-5.4 mini")}
+                    className={`zen-dropdown-item ${currentMode === "local" ? "selected" : ""}`}
+                    onClick={() => handleSelectModeSettings("local")}
                   >
-                    <span className="item-icon">☁️</span>
+                    <span className="item-icon">💻</span>
                     <div className="item-details">
-                      <div className="item-title">GPT-5.4 Mini (Cloud)</div>
-                      <div className="item-desc">High performance cloud sync</div>
+                      <div className="item-title">Local Models</div>
+                      <div className="item-desc">
+                        Secure, offline models via Ollama or LM Studio
+                      </div>
                     </div>
                   </button>
+
                   <button
                     type="button"
-                    className={`zen-dropdown-item ${
-                      currentProvider === "anthropic" && currentModel === "claude-4.6-sonnet"
-                        ? "selected"
-                        : ""
-                    }`}
-                    onClick={() => handleSelectModel("anthropic", "claude-4.6-sonnet")}
+                    className={`zen-dropdown-item ${currentMode === "cloud" ? "selected" : ""}`}
+                    onClick={() => handleSelectModeSettings("cloud")}
                   >
                     <span className="item-icon">☁️</span>
                     <div className="item-details">
-                      <div className="item-title">Claude 4.6 Sonnet (Cloud)</div>
-                      <div className="item-desc">Advanced sync, strict sync privacy</div>
+                      <div className="item-title">Cloud Models</div>
+                      <div className="item-desc">
+                        High-performance AI via OpenAI, Anthropic, Google, xAI
+                      </div>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    className={`zen-dropdown-item ${currentMode === "hybrid" ? "selected" : ""}`}
+                    onClick={() => handleSelectModeSettings("hybrid")}
+                  >
+                    <span className="item-icon">⚡</span>
+                    <div className="item-details">
+                      <div className="item-title">Hybrid Mode</div>
+                      <div className="item-desc">
+                        Run both Cloud and Local models simultaneously
+                      </div>
                     </div>
                   </button>
                 </div>

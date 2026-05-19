@@ -1378,9 +1378,13 @@ async fn llm_list_models(provider: String, endpoint: String) -> IpcResponse<Vec<
     let parsed_provider = match provider.trim().to_lowercase().as_str() {
         "ollama" => llm::client::LlmProvider::Ollama,
         "lmstudio" => llm::client::LlmProvider::LmStudio,
+        "anthropic" => llm::client::LlmProvider::Anthropic,
+        "openai" => llm::client::LlmProvider::OpenAi,
+        "google" => llm::client::LlmProvider::Google,
+        "xai" => llm::client::LlmProvider::XAi,
         _ => {
             return IpcResponse::Err {
-                err: "Unsupported provider. Use 'ollama' or 'lmstudio'.".to_string(),
+                err: "Unsupported provider. Use 'ollama', 'lmstudio', 'anthropic', 'openai', 'google', or 'xai'.".to_string(),
             }
         }
     };
@@ -1415,7 +1419,11 @@ async fn llm_chat(
     let parsed_provider = match provider.trim().to_lowercase().as_str() {
         "ollama" => llm::client::LlmProvider::Ollama,
         "lmstudio" => llm::client::LlmProvider::LmStudio,
-        _ => return Err("Unsupported provider. Use 'ollama' or 'lmstudio'.".to_string()),
+        "anthropic" => llm::client::LlmProvider::Anthropic,
+        "openai" => llm::client::LlmProvider::OpenAi,
+        "google" => llm::client::LlmProvider::Google,
+        "xai" => llm::client::LlmProvider::XAi,
+        _ => return Err("Unsupported provider. Use 'ollama', 'lmstudio', 'anthropic', 'openai', 'google', or 'xai'.".to_string()),
     };
 
     let client = llm::client::UniversalClient::new(parsed_provider, endpoint, model);
@@ -1466,7 +1474,11 @@ async fn onboarding_extract_proposals(
     let parsed_provider = match provider.trim().to_lowercase().as_str() {
         "ollama" => llm::client::LlmProvider::Ollama,
         "lmstudio" => llm::client::LlmProvider::LmStudio,
-        _ => return Err("Unsupported provider. Use 'ollama' or 'lmstudio'.".to_string()),
+        "anthropic" => llm::client::LlmProvider::Anthropic,
+        "openai" => llm::client::LlmProvider::OpenAi,
+        "google" => llm::client::LlmProvider::Google,
+        "xai" => llm::client::LlmProvider::XAi,
+        _ => return Err("Unsupported provider. Use 'ollama', 'lmstudio', 'anthropic', 'openai', 'google', or 'xai'.".to_string()),
     };
 
     let client = llm::client::UniversalClient::new(

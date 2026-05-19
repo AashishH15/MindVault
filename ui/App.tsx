@@ -373,6 +373,7 @@ function App() {
                 scope={assemblerScope}
                 selectedVaultId={selectedVaultId}
                 onSelectVault={onSelectVault}
+                onOpenSettings={onOpenSettings}
               />
             </section>
 
