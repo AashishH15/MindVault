@@ -319,7 +319,7 @@ export default function SpatialWorkspace({
       void loadData();
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [refreshKey, localRefresh]);
+  }, [refreshKey, localRefresh, isRedactedUnlocked]);
 
   useEffect(() => {
     onModalToggle?.(vaultCreateModalOpen);

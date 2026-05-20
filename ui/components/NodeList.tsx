@@ -101,7 +101,7 @@ function NodeList({
       void loadNodes();
     }, 0);
     return () => clearTimeout(timer);
-  }, [refreshKey]);
+  }, [refreshKey, isRedactedUnlocked]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -110,7 +110,7 @@ function NodeList({
       })();
     }, 0);
     return () => clearTimeout(timer);
-  }, [refreshKey]);
+  }, [refreshKey, isRedactedUnlocked]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {

@@ -270,7 +270,7 @@ function VaultSidebar({
       void loadVaults();
     }, 0);
     return () => clearTimeout(timer);
-  }, [refreshKey]);
+  }, [refreshKey, isRedactedUnlocked]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -288,7 +288,7 @@ function VaultSidebar({
       })();
     }, 0);
     return () => clearTimeout(timer);
-  }, [refreshKey]);
+  }, [refreshKey, isRedactedUnlocked]);
 
   async function onCreateVault() {
     setCreateModalName("");

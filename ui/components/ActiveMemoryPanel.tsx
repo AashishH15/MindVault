@@ -77,7 +77,7 @@ function ActiveMemoryPanel({ selectedNodeIds, isRedactedUnlocked }: ActiveMemory
     return () => {
       active = false;
     };
-  }, [selectedNodeIds]);
+  }, [selectedNodeIds, isRedactedUnlocked]);
 
   useEffect(() => {
     let active = true;
@@ -100,7 +100,7 @@ function ActiveMemoryPanel({ selectedNodeIds, isRedactedUnlocked }: ActiveMemory
     return () => {
       active = false;
     };
-  }, []);
+  }, [isRedactedUnlocked]);
 
   const vaultById = useMemo(() => {
     const map: Record<string, (typeof vaults)[number]> = {};

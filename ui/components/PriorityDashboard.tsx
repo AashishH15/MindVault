@@ -125,7 +125,7 @@ function PriorityDashboard({ refreshKey, isRedactedUnlocked }: PriorityDashboard
       void fetchNodes();
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [refreshKey]);
+  }, [refreshKey, isRedactedUnlocked]);
 
   useEffect(
     () => () => {

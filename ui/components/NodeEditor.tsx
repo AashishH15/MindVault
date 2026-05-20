@@ -346,7 +346,7 @@ function NodeEditor({
       void touchNode(nodeId).catch(() => {});
     }, 0);
     return () => clearTimeout(timer);
-  }, [refreshKey, selectedNodeId]);
+  }, [refreshKey, selectedNodeId, isRedactedUnlocked]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -379,7 +379,7 @@ function NodeEditor({
       })();
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [refreshKey]);
+  }, [refreshKey, isRedactedUnlocked]);
 
   const breadcrumbPath = useMemo(() => {
     if (!node) {
