@@ -20,8 +20,108 @@ interface SpatialWorkspaceProps {
   refreshKey: number;
   onVaultCreated?: (id: string) => void;
   onVaultDeleted?: (id: string) => void;
+  onVaultUpdated?: (id: string) => void;
   onNodeCreated?: (id: string) => void;
   onNodeDeleted?: (id: string) => void;
+  onNodeUpdated?: (id: string) => void;
+}
+
+interface PriorityMetadata {
+  profile?: string;
+  pinned?: boolean;
+  score?: number;
+}
+
+// --- Curated Domain Themes & Emojis ---
+function parsePriorityJson(priority: string): PriorityMetadata {
+  try {
+    return (JSON.parse(priority) as PriorityMetadata) || {};
+  } catch {
+    return {};
+  }
+}
+
+function getVaultTheme(name: string) {
+  const lowercaseName = name.toLowerCase();
+  if (
+    lowercaseName.includes("credential") ||
+    lowercaseName.includes("secret") ||
+    lowercaseName.includes("password") ||
+    lowercaseName.includes("key")
+  ) {
+    return {
+      class: "theme-credentials",
+      emoji: "🔐",
+      accent: "#e53e3e",
+    };
+  }
+  if (
+    lowercaseName.includes("work") ||
+    lowercaseName.includes("briefcase") ||
+    lowercaseName.includes("job") ||
+    lowercaseName.includes("project")
+  ) {
+    return {
+      class: "theme-work",
+      emoji: "💼",
+      accent: "#3182ce",
+    };
+  }
+  if (
+    lowercaseName.includes("education") ||
+    lowercaseName.includes("learning") ||
+    lowercaseName.includes("school") ||
+    lowercaseName.includes("book") ||
+    lowercaseName.includes("study")
+  ) {
+    return {
+      class: "theme-education",
+      emoji: "🎓",
+      accent: "#805ad5",
+    };
+  }
+  if (
+    lowercaseName.includes("coding") ||
+    lowercaseName.includes("code") ||
+    lowercaseName.includes("tech") ||
+    lowercaseName.includes("dev") ||
+    lowercaseName.includes("program")
+  ) {
+    return {
+      class: "theme-coding",
+      emoji: "💻",
+      accent: "#38a169",
+    };
+  }
+  if (
+    lowercaseName.includes("personal") ||
+    lowercaseName.includes("user") ||
+    lowercaseName.includes("profile") ||
+    lowercaseName.includes("me")
+  ) {
+    return {
+      class: "theme-personal",
+      emoji: "👤",
+      accent: "#e53e3e",
+    };
+  }
+  if (
+    lowercaseName.includes("finance") ||
+    lowercaseName.includes("coin") ||
+    lowercaseName.includes("money") ||
+    lowercaseName.includes("wealth")
+  ) {
+    return {
+      class: "theme-finance",
+      emoji: "🪙",
+      accent: "#b56a37",
+    };
+  }
+  return {
+    class: "theme-default",
+    emoji: "📂",
+    accent: "#b56a37",
+  };
 }
 
 export default function SpatialWorkspace({
@@ -32,8 +132,10 @@ export default function SpatialWorkspace({
   refreshKey,
   onVaultCreated,
   onVaultDeleted,
+  onVaultUpdated,
   onNodeCreated,
   onNodeDeleted,
+  onNodeUpdated,
 }: SpatialWorkspaceProps) {
   // --- Data States ---
   const [vaults, setVaults] = useState<Vault[]>([]);
@@ -41,6 +143,17 @@ export default function SpatialWorkspace({
   const [doors, setDoors] = useState<Door[]>([]);
   const [loading, setLoading] = useState(true);
   const [localRefresh, setLocalRefresh] = useState(0);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // Auto-clear error message after 5 seconds
+  useEffect(() => {
+    if (errorMsg) {
+      const timer = setTimeout(() => {
+        setErrorMsg(null);
+      }, 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [errorMsg]);
 
   // --- Canvas Navigation States ---
   const [zoom, setZoom] = useState(0.85);
@@ -95,29 +208,35 @@ export default function SpatialWorkspace({
         setDoors(allDoors.data);
       }
 
-      // Initialize/sync card coordinates from SQLite uiMetadata column
-      const coords: Record<string, { x: number; y: number }> = {};
-      allVaults.forEach((v, index) => {
-        // Subvaults don't float independently; they are nested in their parent card
-        if (v.parentVaultId) return;
+      // Initialize/sync card coordinates incrementally from SQLite uiMetadata column
+      setCardPositions((prev) => {
+        const next = { ...prev };
+        allVaults.forEach((v, index) => {
+          // Subvaults don't float independently; they are nested in their parent card
+          if (v.parentVaultId) return;
 
-        let parsed: { position?: { x: number; y: number } } = {};
-        try {
-          if (v.uiMetadata) {
-            parsed = JSON.parse(v.uiMetadata);
+          // Only initialize/overwrite if it doesn't already exist in local state
+          if (!next[v.id]) {
+            let parsed: { position?: { x: number; y: number } } = {};
+            try {
+              if (v.uiMetadata) {
+                parsed = JSON.parse(v.uiMetadata);
+              }
+            } catch (e) {
+              console.error("Error parsing uiMetadata for vault:", v.id, e);
+            }
+
+            next[v.id] = parsed.position || {
+              x: (index % 3) * 350 + 80,
+              y: Math.floor(index / 3) * 550 + 100,
+            };
           }
-        } catch (e) {
-          console.error("Error parsing uiMetadata for vault:", v.id, e);
-        }
-
-        coords[v.id] = parsed.position || {
-          x: (index % 3) * 350 + 80,
-          y: Math.floor(index / 3) * 550 + 100,
-        };
+        });
+        return next;
       });
-      setCardPositions(coords);
     } catch (e) {
       console.error("Failed to load workspace data:", e);
+      setErrorMsg(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
@@ -143,7 +262,8 @@ export default function SpatialWorkspace({
     if (
       target.closest(".spatial-vault-card") ||
       target.closest(".spatial-header-bar") ||
-      target.closest(".spatial-bottom-bar")
+      target.closest(".spatial-bottom-bar") ||
+      target.closest(".spatial-bottom-bar-pill")
     ) {
       return;
     }
@@ -232,12 +352,15 @@ export default function SpatialWorkspace({
     try {
       if (type === "vault" || type === "subvault") {
         await updateVault({ id, name: editValue.trim() });
+        if (onVaultUpdated) onVaultUpdated(id);
       } else {
         await updateNode({ id, title: editValue.trim() });
+        if (onNodeUpdated) onNodeUpdated(id);
       }
       setLocalRefresh((prev) => prev + 1);
     } catch (e) {
       console.error("Failed to rename item:", e);
+      setErrorMsg(e instanceof Error ? e.message : String(e));
     } finally {
       setEditingItemId(null);
     }
@@ -268,13 +391,15 @@ export default function SpatialWorkspace({
         if (onVaultCreated) onVaultCreated(v.id);
       } else if (addingType === "subvault" && addingToVaultId) {
         await createVault({ name: addInputValue.trim(), parentVaultId: addingToVaultId });
+        if (onVaultUpdated) onVaultUpdated(addingToVaultId);
       } else if (addingType === "node" && addingToVaultId) {
+        // Omit hardcoded privacyTier: "open" so it inherits parent vault/subvault privacy tier securely
         const n = await createNode({
           vaultId: addingToVaultId,
           subVaultId: addingToSubvaultId || undefined,
           title: addInputValue.trim(),
           summary: "",
-          nodeType: "Public",
+          nodeType: "concept",
         });
         if (onNodeCreated) onNodeCreated(n.id);
       }
@@ -283,6 +408,7 @@ export default function SpatialWorkspace({
       setAddingType(null);
     } catch (e) {
       console.error("Failed to create inline item:", e);
+      setErrorMsg(e instanceof Error ? e.message : String(e));
     } finally {
       setIsAddingBusy(false);
     }
@@ -329,6 +455,7 @@ export default function SpatialWorkspace({
       setLocalRefresh((prev) => prev + 1);
     } catch (e) {
       console.error("Failed to delete item:", e);
+      setErrorMsg(e instanceof Error ? e.message : String(e));
     }
   };
 
@@ -340,7 +467,7 @@ export default function SpatialWorkspace({
     if (!query) return false;
     // Redacted node titles are redacted, but backend privacy tier handles data leakage.
     // If redacted and query doesn't match redacted string, let's skip.
-    const isRedacted = n.privacyTier === "Redacted";
+    const isRedacted = n.privacyTier === "redacted";
     const title = isRedacted ? "[redacted]" : n.title.toLowerCase();
     const summary = isRedacted ? "" : n.summary.toLowerCase();
     return title.includes(query) || summary.includes(query);
@@ -397,6 +524,9 @@ export default function SpatialWorkspace({
       isLocked: boolean;
       active: boolean;
       middlePoint: { x: number; y: number };
+      markerId: string;
+      badgeWidth: number;
+      badgeX: number;
     }> = [];
 
     // Helper to calculate card relative coordinate offset mathematically
@@ -479,54 +609,97 @@ export default function SpatialWorkspace({
       let tgtY = 0;
       let targetIsLockedOrRedacted = false;
 
+      // Determine horizontal relationship to choose optimal anchors (left/right)
+      const srcCardPos = cardPositions[srcNode.vaultId];
+      let tgtCardPos = null;
       if (door.targetNodeId) {
         const tgtNode = nodes.find((n) => n.id === door.targetNodeId);
-        if (!tgtNode) return;
+        if (tgtNode) tgtCardPos = cardPositions[tgtNode.vaultId];
+      } else if (door.targetVaultId) {
+        tgtCardPos = cardPositions[door.targetVaultId];
+      }
 
-        const tgtPosObj = getNodeCenterPos(tgtNode.vaultId, tgtNode.subVaultId, tgtNode.id);
-        if (!tgtPosObj) return;
-
-        // Choose closest face point
-        if (srcPosObj.right.x < tgtPosObj.left.x) {
-          tgtX = tgtPosObj.left.x;
-          tgtY = tgtPosObj.left.y;
-        } else {
-          tgtX = tgtPosObj.right.x;
-          tgtY = tgtPosObj.right.y;
-        }
-
-        if (tgtNode.privacyTier === "Redacted" || tgtNode.privacyTier === "Locked") {
+      // Check if target is locked or redacted
+      if (door.targetNodeId) {
+        const tgtNode = nodes.find((n) => n.id === door.targetNodeId);
+        if (tgtNode && (tgtNode.privacyTier === "redacted" || tgtNode.privacyTier === "locked")) {
           targetIsLockedOrRedacted = true;
         }
       } else if (door.targetVaultId) {
         const tgtVault = vaults.find((v) => v.id === door.targetVaultId);
-        if (!tgtVault) return;
-
-        const tgtPosObj = getNodeCenterPos(tgtVault.id, null, null);
-        if (!tgtPosObj) return;
-
-        if (srcPosObj.right.x < tgtPosObj.left.x) {
-          tgtX = tgtPosObj.left.x;
-          tgtY = tgtPosObj.left.y;
-        } else {
-          tgtX = tgtPosObj.right.x;
-          tgtY = tgtPosObj.right.y;
-        }
-
-        if (tgtVault.privacyTier === "Redacted" || tgtVault.privacyTier === "Locked") {
+        if (
+          tgtVault &&
+          (tgtVault.privacyTier === "redacted" || tgtVault.privacyTier === "locked")
+        ) {
           targetIsLockedOrRedacted = true;
         }
-      } else {
-        return;
       }
 
-      // Source pos coordinates
-      const srcX = srcPosObj.right.x;
-      const srcY = srcPosObj.right.y;
+      // Determine horizontal direction of routing
+      let routeDirection: "left-to-right" | "right-to-left" = "left-to-right";
+      if (srcCardPos && tgtCardPos) {
+        if (srcCardPos.x + 140 < tgtCardPos.x + 140) {
+          routeDirection = "left-to-right";
+        } else {
+          routeDirection = "right-to-left";
+        }
+      }
+
+      // Select anchors based on direction
+      let srcX = 0;
+      let srcY = 0;
+      if (routeDirection === "left-to-right") {
+        srcX = srcPosObj.right.x;
+        srcY = srcPosObj.right.y;
+
+        if (door.targetNodeId) {
+          const tgtNode = nodes.find((n) => n.id === door.targetNodeId);
+          if (tgtNode) {
+            const tgtPosObj = getNodeCenterPos(tgtNode.vaultId, tgtNode.subVaultId, tgtNode.id);
+            if (tgtPosObj) {
+              tgtX = tgtPosObj.left.x;
+              tgtY = tgtPosObj.left.y;
+            }
+          }
+        } else if (door.targetVaultId) {
+          const tgtPosObj = getNodeCenterPos(door.targetVaultId, null, null);
+          if (tgtPosObj) {
+            tgtX = tgtPosObj.left.x;
+            tgtY = tgtPosObj.left.y;
+          }
+        }
+      } else {
+        srcX = srcPosObj.left.x;
+        srcY = srcPosObj.left.y;
+
+        if (door.targetNodeId) {
+          const tgtNode = nodes.find((n) => n.id === door.targetNodeId);
+          if (tgtNode) {
+            const tgtPosObj = getNodeCenterPos(tgtNode.vaultId, tgtNode.subVaultId, tgtNode.id);
+            if (tgtPosObj) {
+              tgtX = tgtPosObj.right.x;
+              tgtY = tgtPosObj.right.y;
+            }
+          }
+        } else if (door.targetVaultId) {
+          const tgtPosObj = getNodeCenterPos(door.targetVaultId, null, null);
+          if (tgtPosObj) {
+            tgtX = tgtPosObj.right.x;
+            tgtY = tgtPosObj.right.y;
+          }
+        }
+      }
+
+      // If we couldn't resolve targets, skip
+      if (tgtX === 0 && tgtY === 0) return;
 
       // SVG pathway drawing cubic bezier control anchors
-      const controlDistance = Math.max(100, Math.abs(tgtX - srcX) / 2);
-      const d = `M ${srcX} ${srcY} C ${srcX + controlDistance} ${srcY}, ${tgtX - controlDistance} ${tgtY}, ${tgtX} ${tgtY}`;
+      const controlDistance = Math.max(80, Math.abs(tgtX - srcX) / 2);
+      const ctrl1X =
+        routeDirection === "left-to-right" ? srcX + controlDistance : srcX - controlDistance;
+      const ctrl2X =
+        routeDirection === "left-to-right" ? tgtX - controlDistance : tgtX + controlDistance;
+      const d = `M ${srcX} ${srcY} C ${ctrl1X} ${srcY}, ${ctrl2X} ${tgtY}, ${tgtX} ${tgtY}`;
 
       // Middle curve calculation for dynamic label tags
       const midX = (srcX + tgtX) / 2;
@@ -535,9 +708,17 @@ export default function SpatialWorkspace({
       // Evaluate visual active indicator
       const active = selectedNodeId === srcNode.id || selectedNodeId === door.targetNodeId;
       const isLocked =
-        srcNode.privacyTier === "Redacted" ||
-        srcNode.privacyTier === "Locked" ||
+        srcNode.privacyTier === "redacted" ||
+        srcNode.privacyTier === "locked" ||
         targetIsLockedOrRedacted;
+
+      // Calculate dynamic label and badge metrics
+      const labelText = isLocked ? "🔒 Locked" : sanitizeSvgText(door.label || "");
+      const badgeWidth = Math.max(80, labelText.length * 6.5 + 16);
+      const badgeX = -badgeWidth / 2;
+
+      // Calculate matching arrowhead marker ID
+      const markerId = active ? "arrow-active" : isLocked ? "arrow-locked" : "arrow-default";
 
       paths.push({
         id: door.id,
@@ -546,6 +727,9 @@ export default function SpatialWorkspace({
         isLocked,
         active,
         middlePoint: { x: midX, y: midY },
+        markerId,
+        badgeWidth,
+        badgeX,
       });
     });
 
@@ -582,25 +766,7 @@ export default function SpatialWorkspace({
           }}
           title="Create a new top level vault card"
         >
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.5"
-          >
-            <line x1="12" y1="5" x2="12" y2="19" />
-            <line x1="5" y1="12" x2="19" y2="12" />
-          </svg>
-          Vault
-        </button>
-        <button
-          className="spatial-header-btn"
-          onClick={resetView}
-          title="Reset zoom and center canvas"
-        >
-          Reset View
+          + Vault
         </button>
       </div>
 
@@ -612,12 +778,13 @@ export default function SpatialWorkspace({
             top: "70px",
             left: "50%",
             transform: "translateX(-50%)",
-            background: "white",
+            background: "rgba(253, 252, 250, 0.95)",
+            backdropFilter: "blur(12px)",
             padding: "10px",
-            borderRadius: "12px",
-            border: "1.5px solid #b56a37",
+            borderRadius: "16px",
+            border: "1.5px solid rgba(188, 108, 37, 0.25)",
             zIndex: 100,
-            boxShadow: "0 10px 25px rgba(0,0,0,0.1)",
+            boxShadow: "0 10px 30px rgba(0,0,0,0.1)",
             display: "flex",
             gap: "8px",
           }}
@@ -661,7 +828,18 @@ export default function SpatialWorkspace({
         <svg className="spatial-svg-overlay">
           <defs>
             <marker
-              id="arrow"
+              id="arrow-default"
+              viewBox="0 0 10 10"
+              refX="8"
+              refY="5"
+              markerWidth="6"
+              markerHeight="6"
+              orient="auto-start-reverse"
+            >
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="rgba(188, 108, 37, 0.6)" />
+            </marker>
+            <marker
+              id="arrow-active"
               viewBox="0 0 10 10"
               refX="8"
               refY="5"
@@ -671,13 +849,25 @@ export default function SpatialWorkspace({
             >
               <path d="M 0 0 L 10 5 L 0 10 z" fill="#b56a37" />
             </marker>
+            <marker
+              id="arrow-locked"
+              viewBox="0 0 10 10"
+              refX="8"
+              refY="5"
+              markerWidth="6"
+              markerHeight="6"
+              orient="auto-start-reverse"
+            >
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#a3a09a" />
+            </marker>
           </defs>
           {connectionPaths.map((path) => (
             <g key={path.id}>
-              {/* Backing pathway path */}
+              {/* Backing pathway path with dynamic arrowhead */}
               <path
                 className={`spatial-connection-line ${path.active ? "connection-active" : ""} ${path.isLocked ? "connection-locked" : ""}`}
                 d={path.d}
+                markerEnd={`url(#${path.markerId})`}
               />
               {/* Sanitized Dynamic labels overlays */}
               {path.label && (
@@ -685,7 +875,13 @@ export default function SpatialWorkspace({
                   className="spatial-connection-badge"
                   transform={`translate(${path.middlePoint.x}, ${path.middlePoint.y})`}
                 >
-                  <rect className="spatial-badge-bg" x={-40} y={-10} width={80} height={20} />
+                  <rect
+                    className="spatial-badge-bg"
+                    x={path.badgeX}
+                    y={-10}
+                    width={path.badgeWidth}
+                    height={20}
+                  />
                   <text
                     className={`spatial-badge-text ${path.isLocked ? "spatial-badge-text-locked" : ""}`}
                     y={1}
@@ -720,10 +916,18 @@ export default function SpatialWorkspace({
           const hasQuery = query.length > 0;
           const isVMatch = isVaultMatch(vault);
           const shouldDim = hasQuery && !isVMatch;
-          const isLocked = vault.privacyTier === "Locked" || vault.privacyTier === "Redacted";
+          const isLocked = vault.privacyTier === "locked" || vault.privacyTier === "redacted";
+
+          // Calculate total count of items in this vault card
+          const totalItemCount =
+            directNodesList.length +
+            subvaultsList.reduce((acc, sv) => acc + getNodesFor(vault.id, sv.id).length, 0);
+
+          // Get domain curated theme
+          const theme = getVaultTheme(vault.name);
 
           // Card css class mappings
-          let cardClasses = "spatial-vault-card";
+          let cardClasses = `spatial-vault-card ${theme.class}`;
           if (selectedVaultId === vault.id) cardClasses += " active-selection";
           if (shouldDim) cardClasses += " spatial-dimmed";
           if (hasQuery && isVMatch) cardClasses += " spatial-glow";
@@ -743,7 +947,7 @@ export default function SpatialWorkspace({
               {/* Vault card header */}
               <div className="spatial-card-header">
                 <div className="spatial-card-title-area" onClick={() => onSelectVault(vault.id)}>
-                  <span className="spatial-card-emoji">{vault.icon || "📂"}</span>
+                  <span className="spatial-card-emoji">{vault.icon || theme.emoji}</span>
                   {editingItemId === vault.id ? (
                     <input
                       className="spatial-card-name-input"
@@ -768,11 +972,12 @@ export default function SpatialWorkspace({
                   )}
                 </div>
 
-                <div className="spatial-card-actions">
-                  {/* Privacy Icon */}
-                  {isLocked && <span style={{ fontSize: "0.8rem", color: "#a3a09a" }}>🔒</span>}
+                <div className="spatial-card-header-right">
+                  {isLocked && <span className="spatial-card-lock-badge">locked</span>}
+                  <span className="spatial-card-count-badge">{totalItemCount}</span>
+                </div>
 
-                  {/* Inline edit pencil button */}
+                <div className="spatial-card-actions">
                   {!isLocked && (
                     <button
                       className="spatial-card-action-btn"
@@ -786,7 +991,6 @@ export default function SpatialWorkspace({
                     </button>
                   )}
 
-                  {/* Armed deletion button */}
                   <button
                     className={`spatial-card-action-btn ${deleteArmedId === vault.id ? "delete-armed" : ""}`}
                     onClick={(e) => handleArmDelete(e, vault.id)}
@@ -801,8 +1005,20 @@ export default function SpatialWorkspace({
               <ul className="spatial-node-list">
                 {directNodesList.map((node) => {
                   const nodeMatch = isNodeMatch(node);
-                  const isRedacted = node.privacyTier === "Redacted";
+                  const isRedacted = node.privacyTier === "redacted";
                   const isNSelected = selectedNodeId === node.id;
+
+                  const prio = parsePriorityJson(node.priority);
+                  const isPinned = prio.profile === "pinned" || prio.pinned === true;
+                  const isCtx =
+                    prio.profile === "fast" ||
+                    prio.profile === "standard" ||
+                    (prio.score ?? 0) > 0.8 ||
+                    selectedNodeId === node.id;
+                  const hasDoor = doors.some((d) => d.sourceNodeId === node.id);
+                  const priorityScore = Math.round(
+                    (typeof prio.score === "number" ? prio.score : 0.8) * 100
+                  );
 
                   let nodeClasses = "spatial-node-row";
                   if (isNSelected) nodeClasses += " selected-node";
@@ -816,7 +1032,7 @@ export default function SpatialWorkspace({
                       onClick={() => !isRedacted && onSelectNode(node.id)}
                     >
                       <div className="spatial-node-title-area">
-                        <span className="spatial-node-icon">{isRedacted ? "⚠️" : "📄"}</span>
+                        <span className="spatial-node-dot" />
                         {editingItemId === node.id ? (
                           <input
                             className="spatial-node-title-input"
@@ -839,13 +1055,28 @@ export default function SpatialWorkspace({
                             {isRedacted ? "[REDACTED]" : node.title}
                           </span>
                         )}
+
+                        {/* State badges rendering */}
+                        {isPinned && <span className="spatial-node-badge badge-pin">pin</span>}
+                        {isCtx && !isPinned && (
+                          <span className="spatial-node-badge badge-ctx">ctx</span>
+                        )}
+                        {hasDoor && <span className="spatial-node-badge badge-door">door</span>}
+                      </div>
+
+                      <div className="spatial-node-right-area">
+                        {isLocked && (
+                          <span style={{ fontSize: "0.75rem", marginRight: "4px" }}>🔒</span>
+                        )}
+                        <span className="spatial-node-score">{priorityScore}</span>
                       </div>
 
                       <div className="spatial-card-actions">
                         {!isRedacted && !isLocked && (
                           <button
                             className="spatial-card-action-btn"
-                            onClick={() => {
+                            onClick={(e) => {
+                              e.stopPropagation();
                               setEditingItemId(node.id);
                               setEditingItemType("node");
                               setEditValue(node.title);
@@ -857,7 +1088,10 @@ export default function SpatialWorkspace({
                         {!isRedacted && (
                           <button
                             className={`spatial-card-action-btn ${deleteArmedId === node.id ? "delete-armed" : ""}`}
-                            onClick={(e) => handleArmDelete(e, node.id)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleArmDelete(e, node.id);
+                            }}
                           >
                             {deleteArmedId === node.id ? "Ok?" : "🗑️"}
                           </button>
@@ -872,7 +1106,7 @@ export default function SpatialWorkspace({
               {subvaultsList.map((subvault) => {
                 const subNodes = getNodesFor(vault.id, subvault.id);
                 const subvaultLocked =
-                  subvault.privacyTier === "Locked" || subvault.privacyTier === "Redacted";
+                  subvault.privacyTier === "locked" || subvault.privacyTier === "redacted";
 
                 return (
                   <div key={subvault.id} className="spatial-subvault-container">
@@ -891,14 +1125,7 @@ export default function SpatialWorkspace({
                             onKeyDown={(e) => handleRenameKeyDown(e, subvault.id, "subvault")}
                           />
                         ) : (
-                          <span
-                            onDoubleClick={() => {
-                              if (subvaultLocked) return;
-                              setEditingItemId(subvault.id);
-                              setEditingItemType("subvault");
-                              setEditValue(subvault.name);
-                            }}
-                          >
+                          <span>
                             {subvault.icon || "📁"} {subvault.name}
                           </span>
                         )}
@@ -909,7 +1136,8 @@ export default function SpatialWorkspace({
                         {!subvaultLocked && (
                           <button
                             className="spatial-card-action-btn"
-                            onClick={() => {
+                            onClick={(e) => {
+                              e.stopPropagation();
                               setEditingItemId(subvault.id);
                               setEditingItemType("subvault");
                               setEditValue(subvault.name);
@@ -920,7 +1148,10 @@ export default function SpatialWorkspace({
                         )}
                         <button
                           className={`spatial-card-action-btn ${deleteArmedId === subvault.id ? "delete-armed" : ""}`}
-                          onClick={(e) => handleArmDelete(e, subvault.id)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleArmDelete(e, subvault.id);
+                          }}
                         >
                           {deleteArmedId === subvault.id ? "Ok?" : "🗑️"}
                         </button>
@@ -931,8 +1162,20 @@ export default function SpatialWorkspace({
                     <ul className="spatial-node-list">
                       {subNodes.map((node) => {
                         const nodeMatch = isNodeMatch(node);
-                        const isRedacted = node.privacyTier === "Redacted";
+                        const isRedacted = node.privacyTier === "redacted";
                         const isNSelected = selectedNodeId === node.id;
+
+                        const prio = parsePriorityJson(node.priority);
+                        const isPinned = prio.profile === "pinned" || prio.pinned === true;
+                        const isCtx =
+                          prio.profile === "fast" ||
+                          prio.profile === "standard" ||
+                          (prio.score ?? 0) > 0.8 ||
+                          selectedNodeId === node.id;
+                        const hasDoor = doors.some((d) => d.sourceNodeId === node.id);
+                        const priorityScore = Math.round(
+                          (typeof prio.score === "number" ? prio.score : 0.8) * 100
+                        );
 
                         let nodeClasses = "spatial-node-row";
                         if (isNSelected) nodeClasses += " selected-node";
@@ -946,7 +1189,7 @@ export default function SpatialWorkspace({
                             onClick={() => !isRedacted && onSelectNode(node.id)}
                           >
                             <div className="spatial-node-title-area">
-                              <span className="spatial-node-icon">{isRedacted ? "⚠️" : "📄"}</span>
+                              <span className="spatial-node-dot" />
                               {editingItemId === node.id ? (
                                 <input
                                   className="spatial-node-title-input"
@@ -969,13 +1212,32 @@ export default function SpatialWorkspace({
                                   {isRedacted ? "[REDACTED]" : node.title}
                                 </span>
                               )}
+
+                              {/* State badges rendering */}
+                              {isPinned && (
+                                <span className="spatial-node-badge badge-pin">pin</span>
+                              )}
+                              {isCtx && !isPinned && (
+                                <span className="spatial-node-badge badge-ctx">ctx</span>
+                              )}
+                              {hasDoor && (
+                                <span className="spatial-node-badge badge-door">door</span>
+                              )}
+                            </div>
+
+                            <div className="spatial-node-right-area">
+                              {subvaultLocked && (
+                                <span style={{ fontSize: "0.75rem", marginRight: "4px" }}>🔒</span>
+                              )}
+                              <span className="spatial-node-score">{priorityScore}</span>
                             </div>
 
                             <div className="spatial-card-actions">
                               {!isRedacted && !subvaultLocked && !isLocked && (
                                 <button
                                   className="spatial-card-action-btn"
-                                  onClick={() => {
+                                  onClick={(e) => {
+                                    e.stopPropagation();
                                     setEditingItemId(node.id);
                                     setEditingItemType("node");
                                     setEditValue(node.title);
@@ -987,7 +1249,10 @@ export default function SpatialWorkspace({
                               {!isRedacted && (
                                 <button
                                   className={`spatial-card-action-btn ${deleteArmedId === node.id ? "delete-armed" : ""}`}
-                                  onClick={(e) => handleArmDelete(e, node.id)}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleArmDelete(e, node.id);
+                                  }}
                                 >
                                   {deleteArmedId === node.id ? "Ok?" : "🗑️"}
                                 </button>
@@ -1046,110 +1311,130 @@ export default function SpatialWorkspace({
                 );
               })}
 
-              {/* Inline adding tools at the bottom of the top level vault card */}
-              {!isLocked && (
-                <div style={{ display: "flex", gap: "8px", marginTop: "6px" }}>
-                  {/* Inline Node inside Card directly */}
-                  {addingType === "node" && addingToVaultId === vault.id && !addingToSubvaultId ? (
-                    <div className="spatial-add-input-wrapper">
-                      <input
-                        className="spatial-add-inline-input"
-                        autoFocus
-                        placeholder="Node title..."
-                        value={addInputValue}
-                        onChange={(e) => setAddInputValue(e.target.value)}
-                        onKeyDown={handleAddKeyDown}
-                        disabled={isAddingBusy}
-                      />
-                      <button
-                        className="spatial-add-confirm-btn"
-                        onClick={handleAddSubmit}
-                        disabled={isAddingBusy}
-                      >
-                        {isAddingBusy ? "..." : "Add"}
-                      </button>
-                      <button
-                        className="spatial-add-cancel-btn"
-                        onClick={() => setAddingType(null)}
-                        disabled={isAddingBusy}
-                      >
-                        x
-                      </button>
-                    </div>
-                  ) : addingType === "subvault" && addingToVaultId === vault.id ? (
-                    <div className="spatial-add-input-wrapper">
-                      <input
-                        className="spatial-add-inline-input"
-                        autoFocus
-                        placeholder="Subvault name..."
-                        value={addInputValue}
-                        onChange={(e) => setAddInputValue(e.target.value)}
-                        onKeyDown={handleAddKeyDown}
-                        disabled={isAddingBusy}
-                      />
-                      <button
-                        className="spatial-add-confirm-btn"
-                        onClick={handleAddSubmit}
-                        disabled={isAddingBusy}
-                      >
-                        {isAddingBusy ? "..." : "Add"}
-                      </button>
-                      <button
-                        className="spatial-add-cancel-btn"
-                        onClick={() => setAddingType(null)}
-                        disabled={isAddingBusy}
-                      >
-                        x
-                      </button>
-                    </div>
-                  ) : (
-                    <>
-                      <button
-                        className="spatial-add-inline-btn"
-                        style={{ flex: 1 }}
-                        onClick={() => {
-                          setAddingType("node");
-                          setAddingToVaultId(vault.id);
-                          setAddingToSubvaultId(null);
-                          setAddInputValue("");
-                        }}
-                      >
-                        + node
-                      </button>
-                      <button
-                        className="spatial-add-inline-btn"
-                        style={{ flex: 1 }}
-                        onClick={() => {
-                          setAddingType("subvault");
-                          setAddingToVaultId(vault.id);
-                          setAddInputValue("");
-                        }}
-                      >
-                        + subvault
-                      </button>
-                    </>
-                  )}
-                </div>
-              )}
+              {/* Bottom Actions Row containing '+ node' / '+ subvault' / 'open vault' */}
+              <div className="spatial-card-bottom-actions">
+                {!isLocked && (
+                  <div style={{ display: "flex", gap: "8px", flex: 1 }}>
+                    {addingType === "node" &&
+                    addingToVaultId === vault.id &&
+                    !addingToSubvaultId ? (
+                      <div className="spatial-add-input-wrapper">
+                        <input
+                          className="spatial-add-inline-input"
+                          autoFocus
+                          placeholder="Node title..."
+                          value={addInputValue}
+                          onChange={(e) => setAddInputValue(e.target.value)}
+                          onKeyDown={handleAddKeyDown}
+                          disabled={isAddingBusy}
+                        />
+                        <button
+                          className="spatial-add-confirm-btn"
+                          onClick={handleAddSubmit}
+                          disabled={isAddingBusy}
+                        >
+                          {isAddingBusy ? "..." : "Add"}
+                        </button>
+                        <button
+                          className="spatial-add-cancel-btn"
+                          onClick={() => setAddingType(null)}
+                          disabled={isAddingBusy}
+                        >
+                          x
+                        </button>
+                      </div>
+                    ) : addingType === "subvault" && addingToVaultId === vault.id ? (
+                      <div className="spatial-add-input-wrapper">
+                        <input
+                          className="spatial-add-inline-input"
+                          autoFocus
+                          placeholder="Subvault name..."
+                          value={addInputValue}
+                          onChange={(e) => setAddInputValue(e.target.value)}
+                          onKeyDown={handleAddKeyDown}
+                          disabled={isAddingBusy}
+                        />
+                        <button
+                          className="spatial-add-confirm-btn"
+                          onClick={handleAddSubmit}
+                          disabled={isAddingBusy}
+                        >
+                          {isAddingBusy ? "..." : "Add"}
+                        </button>
+                        <button
+                          className="spatial-add-cancel-btn"
+                          onClick={() => setAddingType(null)}
+                          disabled={isAddingBusy}
+                        >
+                          x
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <button
+                          className="spatial-add-inline-btn"
+                          style={{ flex: 1 }}
+                          onClick={() => {
+                            setAddingType("node");
+                            setAddingToVaultId(vault.id);
+                            setAddingToSubvaultId(null);
+                            setAddInputValue("");
+                          }}
+                        >
+                          + node
+                        </button>
+                        <button
+                          className="spatial-add-inline-btn"
+                          style={{ flex: 1 }}
+                          onClick={() => {
+                            setAddingType("subvault");
+                            setAddingToVaultId(vault.id);
+                            setAddInputValue("");
+                          }}
+                        >
+                          + subvault
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
+
+                <button className="spatial-card-open-vault" onClick={() => onSelectVault(vault.id)}>
+                  open vault →
+                </button>
+              </div>
             </div>
           );
         })}
       </div>
 
-      {/* Sleek dynamic bottom control bar */}
-      <div className="spatial-bottom-bar">
-        <div className="spatial-zoom-indicator">Scale: {Math.round(zoom * 100)}%</div>
-
-        <div className="spatial-search-wrapper">
-          <span className="spatial-search-icon">🔍</span>
-          <input
-            className="spatial-search-input"
-            placeholder="Search spatial vault, subvaults & nodes..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
-        </div>
+      {/* Exquisite premium bottom pill control bar matching Image 2 mockup */}
+      <div className="spatial-bottom-bar-pill">
+        <span className="spatial-pill-search-icon">🔍</span>
+        <input
+          className="spatial-pill-search-input"
+          placeholder="Search nodes..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+        />
+        <div className="spatial-pill-divider" />
+        <button className="spatial-pill-reset-btn" onClick={resetView}>
+          Reset
+        </button>
+        <div className="spatial-pill-divider" />
+        <div className="spatial-pill-zoom">{Math.round(zoom * 100)}%</div>
       </div>
+
+      {/* Glassmorphic Sliding Error Toast */}
+      {errorMsg && (
+        <div className="spatial-error-toast">
+          <span className="spatial-error-toast-icon">⚠️</span>
+          <span className="spatial-error-toast-text">{errorMsg}</span>
+          <button className="spatial-error-toast-close" onClick={() => setErrorMsg(null)}>
+            ✕
+          </button>
+        </div>
+      )}
     </div>
   );
 }

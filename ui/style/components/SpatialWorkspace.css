@@ -485,6 +485,7 @@
   height: 100%;
   pointer-events: none;
   z-index: 1;
+  overflow: visible !important;
 }
 
 .spatial-connection-line {
@@ -555,7 +556,7 @@
 .canvas-view-toggle-pill {
   position: absolute;
   top: 16px;
-  right: 16px;
+  right: 68px;
   z-index: 45;
   display: flex;
   background: rgba(253, 252, 250, 0.85);
@@ -592,4 +593,345 @@
   background: #b56a37;
   color: #ffffff;
   box-shadow: 0 2px 8px rgba(188, 108, 37, 0.2);
+}
+
+/* ==========================================
+   PREMIUM THEMES & OVERLAYS (MATCHING MOCKUP)
+   ========================================== */
+
+/* 1. Card Domain Themes (Glassmorphic pastel matching mockup backgrounds and accents) */
+.spatial-vault-card.theme-credentials {
+  background: rgba(254, 237, 238, 0.92);
+  border: 1.5px solid rgba(229, 62, 62, 0.18);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+.spatial-vault-card.theme-credentials.active-selection {
+  border-color: rgba(229, 62, 62, 0.45);
+  box-shadow: 0 8px 30px rgba(229, 62, 62, 0.12);
+}
+.theme-credentials .spatial-node-dot {
+  background-color: #e53e3e;
+}
+
+.spatial-vault-card.theme-work {
+  background: rgba(235, 248, 255, 0.92);
+  border: 1.5px solid rgba(49, 130, 206, 0.18);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+.spatial-vault-card.theme-work.active-selection {
+  border-color: rgba(49, 130, 206, 0.45);
+  box-shadow: 0 8px 30px rgba(49, 130, 206, 0.12);
+}
+.theme-work .spatial-node-dot {
+  background-color: #3182ce;
+}
+
+.spatial-vault-card.theme-education {
+  background: rgba(244, 240, 253, 0.92);
+  border: 1.5px solid rgba(128, 90, 213, 0.18);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+.spatial-vault-card.theme-education.active-selection {
+  border-color: rgba(128, 90, 213, 0.45);
+  box-shadow: 0 8px 30px rgba(128, 90, 213, 0.12);
+}
+.theme-education .spatial-node-dot {
+  background-color: #805ad5;
+}
+
+.spatial-vault-card.theme-coding {
+  background: rgba(230, 246, 235, 0.92);
+  border: 1.5px solid rgba(56, 161, 105, 0.18);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+.spatial-vault-card.theme-coding.active-selection {
+  border-color: rgba(56, 161, 105, 0.45);
+  box-shadow: 0 8px 30px rgba(56, 161, 105, 0.12);
+}
+.theme-coding .spatial-node-dot {
+  background-color: #38a169;
+}
+
+.spatial-vault-card.theme-personal {
+  background: rgba(254, 237, 238, 0.92);
+  border: 1.5px solid rgba(229, 62, 62, 0.18);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+.spatial-vault-card.theme-personal.active-selection {
+  border-color: rgba(229, 62, 62, 0.45);
+  box-shadow: 0 8px 30px rgba(229, 62, 62, 0.12);
+}
+.theme-personal .spatial-node-dot {
+  background-color: #e53e3e;
+}
+
+.spatial-vault-card.theme-finance,
+.spatial-vault-card.theme-default {
+  background: rgba(253, 251, 247, 0.92);
+  border: 1.5px solid rgba(188, 108, 37, 0.18);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+.theme-finance .spatial-node-dot,
+.theme-default .spatial-node-dot {
+  background-color: #b56a37;
+}
+
+/* 2. Clean Minimal Node Rows & Hover Action Fades */
+.spatial-node-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-right: 8px;
+  flex-shrink: 0;
+}
+
+.spatial-node-right-area {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+  margin-right: 8px;
+  font-size: 0.72rem;
+  color: #7d7a75;
+  font-weight: 600;
+}
+
+.spatial-node-row .spatial-card-actions {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 150ms ease;
+}
+
+.spatial-node-row:hover .spatial-card-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* 3. Node Pill Badges (Pin, Context, and Doors) */
+.spatial-node-badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  border-radius: 8px;
+  padding: 1px 6px;
+  margin-left: 6px;
+  text-transform: lowercase;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.spatial-node-badge.badge-pin {
+  background-color: #fef3c7;
+  color: #d97706;
+  border: 1px solid rgba(217, 119, 6, 0.2);
+}
+.spatial-node-badge.badge-ctx {
+  background-color: #f3f4f6;
+  color: #4b5563;
+  border: 1px solid rgba(75, 85, 99, 0.15);
+}
+.spatial-node-badge.badge-door {
+  background-color: #dbeafe;
+  color: #2563eb;
+  border: 1px solid rgba(37, 99, 235, 0.2);
+}
+
+/* 4. Card Header Count & Locked Badges and Bottom Actions Layout */
+.spatial-card-header-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  margin-right: 6px;
+}
+
+.spatial-card-lock-badge {
+  font-size: 0.65rem;
+  color: #c53030;
+  background: #fff5f5;
+  border: 1px solid rgba(229, 62, 62, 0.25);
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-weight: 700;
+  text-transform: lowercase;
+}
+
+.spatial-card-count-badge {
+  font-size: 0.72rem;
+  color: #7d7a75;
+  background: rgba(0, 0, 0, 0.04);
+  padding: 2px 6px;
+  border-radius: 8px;
+  font-weight: 600;
+}
+
+.spatial-card-bottom-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: auto;
+  padding-top: 8px;
+  border-top: 1px solid rgba(188, 108, 37, 0.06);
+  gap: 12px;
+}
+
+.spatial-card-open-vault {
+  font-size: 0.72rem;
+  color: #7d7a75;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transition: color 120ms ease;
+  margin-left: auto;
+  white-space: nowrap;
+}
+.spatial-card-open-vault:hover {
+  color: #1b1a17;
+}
+
+/* 5. Exquisite Floating Pill Footer Controls */
+.spatial-bottom-bar-pill {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  background: rgba(253, 252, 250, 0.92);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1.5px solid rgba(188, 108, 37, 0.15);
+  border-radius: 30px;
+  padding: 6px 16px 6px 20px;
+  box-shadow: 0 10px 35px rgba(27, 26, 23, 0.08);
+  z-index: 10;
+  pointer-events: auto;
+  width: 90%;
+  max-width: 480px;
+  height: 48px;
+}
+
+.spatial-pill-search-icon {
+  font-size: 1.1rem;
+  color: #7d7a75;
+  margin-right: 10px;
+  flex-shrink: 0;
+}
+
+.spatial-pill-search-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: #1b1a17;
+  font-size: 0.9rem;
+  font-family: inherit;
+  min-width: 0;
+}
+.spatial-pill-search-input:focus {
+  outline: none;
+}
+
+.spatial-pill-divider {
+  width: 1px;
+  height: 20px;
+  background: rgba(188, 108, 37, 0.15);
+  margin: 0 16px;
+  flex-shrink: 0;
+}
+
+.spatial-pill-reset-btn {
+  background: transparent;
+  border: none;
+  color: #7d7a75;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+  transition: all 120ms ease;
+  flex-shrink: 0;
+}
+.spatial-pill-reset-btn:hover {
+  color: #1b1a17;
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.spatial-pill-zoom {
+  font-size: 0.88rem;
+  color: #7d7a75;
+  font-weight: 600;
+  width: 45px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+/* Glassmorphic Sliding Error Toast */
+.spatial-error-toast {
+  position: absolute;
+  bottom: 84px;
+  right: 24px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(254, 237, 238, 0.95);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1.5px solid rgba(229, 62, 62, 0.25);
+  border-radius: 16px;
+  padding: 10px 16px;
+  box-shadow: 0 8px 30px rgba(229, 62, 62, 0.1);
+  z-index: 1002;
+  animation: slideInRight 350ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  max-width: 320px;
+  pointer-events: auto;
+}
+
+.spatial-error-toast-icon {
+  font-size: 1.1rem;
+  flex-shrink: 0;
+}
+
+.spatial-error-toast-text {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #c53030;
+  line-height: 1.3;
+}
+
+.spatial-error-toast-close {
+  background: transparent;
+  border: none;
+  color: #e53e3e;
+  font-size: 0.85rem;
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 120ms ease;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.spatial-error-toast-close:hover {
+  opacity: 0.7;
+}
+
+@keyframes slideInRight {
+  from {
+    transform: translateX(120%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
 }

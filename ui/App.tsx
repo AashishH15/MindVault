@@ -78,11 +78,23 @@ function App() {
   const [rightPanePinned, setRightPanePinned] = useState<boolean>(false);
   const [leftPaneWidth, setLeftPaneWidth] = useState<number>(() => {
     const saved = localStorage.getItem("sidebar_left_width");
-    return saved ? Math.max(200, Math.min(window.innerWidth * 0.4, parseInt(saved, 10))) : 280;
+    if (saved) {
+      const parsed = parseInt(saved, 10);
+      if (!isNaN(parsed)) {
+        return Math.max(200, Math.min(window.innerWidth * 0.4, parsed));
+      }
+    }
+    return 280;
   });
   const [rightPaneWidth, setRightPaneWidth] = useState<number>(() => {
     const saved = localStorage.getItem("sidebar_right_width");
-    return saved ? Math.max(200, Math.min(window.innerWidth * 0.4, parseInt(saved, 10))) : 400;
+    if (saved) {
+      const parsed = parseInt(saved, 10);
+      if (!isNaN(parsed)) {
+        return Math.max(200, Math.min(window.innerWidth * 0.4, parsed));
+      }
+    }
+    return 400;
   });
 
   // Load persistent panel widths from the database on mount
@@ -221,6 +233,10 @@ function App() {
     setNodeRefreshKey((value) => value + 1);
   }
 
+  function onVaultUpdated(_vaultId: string) {
+    setVaultRefreshKey((value) => value + 1);
+  }
+
   function onSelectNode(nodeId: string) {
     setSelectedNodeId(nodeId);
     setShowDashboard(false);
@@ -241,6 +257,10 @@ function App() {
       setSelectedNodeId(null);
       setRightPanePinned(false);
     }
+    setNodeRefreshKey((value) => value + 1);
+  }
+
+  function onNodeUpdated(_nodeId: string) {
     setNodeRefreshKey((value) => value + 1);
   }
 
@@ -278,16 +298,18 @@ function App() {
   }
 
   const leftToggleStyle = {
-    left: leftPaneExpanded || sidebarModalOpen ? leftPaneWidth + 16 : 16,
+    left: leftPaneExpanded || sidebarModalOpen ? `${leftPaneWidth + 16}px` : "16px",
+    zIndex: 1005,
   };
 
   const rightToggleStyle = {
-    right: rightPaneExpanded ? rightPaneWidth + 16 : 16,
+    right: rightPaneExpanded ? `${rightPaneWidth + 16}px` : "16px",
+    zIndex: 1005,
   };
 
   const zenCanvasStyle = {
-    left: leftPaneExpanded || sidebarModalOpen ? leftPaneWidth : 0,
-    right: rightPaneExpanded ? rightPaneWidth : 0,
+    left: leftPaneExpanded || sidebarModalOpen ? `${leftPaneWidth}px` : "0px",
+    right: rightPaneExpanded ? `${rightPaneWidth}px` : "0px",
   };
 
   return (
@@ -313,6 +335,119 @@ function App() {
         ) : null}
         {onboardingResolved && needsOnboarding ? null : (
           <>
+            <section className="zen-canvas" onClick={onZenCanvasClick} style={zenCanvasStyle}>
+              {/* Floating segment view toggle */}
+              <div className="canvas-view-toggle-pill" onClick={(e) => e.stopPropagation()}>
+                <button
+                  className={`canvas-view-toggle-btn ${viewMode === "chat" ? "active" : ""}`}
+                  onClick={() => setViewMode("chat")}
+                >
+                  💬 Recall / Chat
+                </button>
+                <button
+                  className={`canvas-view-toggle-btn ${viewMode === "spatial" ? "active" : ""}`}
+                  onClick={() => setViewMode("spatial")}
+                >
+                  🕸️ Spatial Workspace
+                </button>
+              </div>
+
+              {viewMode === "spatial" ? (
+                <SpatialWorkspace
+                  selectedVaultId={selectedVaultId}
+                  selectedNodeId={selectedNodeId}
+                  onSelectVault={onSelectVault}
+                  onSelectNode={onSelectNode}
+                  refreshKey={vaultRefreshKey + nodeRefreshKey}
+                  onVaultCreated={onVaultCreated}
+                  onVaultDeleted={onVaultDeleted}
+                  onVaultUpdated={onVaultUpdated}
+                  onNodeCreated={onNodeCreated}
+                  onNodeDeleted={onNodeDeleted}
+                  onNodeUpdated={onNodeUpdated}
+                />
+              ) : (
+                <ChatPanel
+                  selectedNodeIds={scopeNodeIds}
+                  scope={assemblerScope}
+                  selectedVaultId={selectedVaultId}
+                  onSelectVault={onSelectVault}
+                  onOpenSettings={onOpenSettings}
+                />
+              )}
+            </section>
+
+            <div
+              className={`pane-wrap left ${leftPaneExpanded || sidebarModalOpen ? "show" : ""}`}
+              style={{ width: `${leftPaneWidth}px` }}
+            >
+              {!selectedVaultId ? (
+                <VaultSidebar
+                  selectedVaultId={selectedVaultId}
+                  onSelectVault={onSelectVault}
+                  onSelectNode={onSelectNode}
+                  onVaultCreated={onVaultCreated}
+                  onVaultDeleted={onVaultDeleted}
+                  onOpenDashboard={onOpenDashboard}
+                  onOpenSettings={onOpenSettings}
+                  refreshKey={vaultRefreshKey}
+                  isRedactedUnlocked={isRedactedUnlocked}
+                  setIsRedactedUnlocked={setIsRedactedUnlocked}
+                  onModalToggle={setSidebarModalOpen}
+                />
+              ) : (
+                <NodeList
+                  selectedVaultId={selectedVaultId}
+                  selectedNodeId={selectedNodeId}
+                  onSelectNode={onSelectNode}
+                  onNodeCreated={onNodeCreated}
+                  onBack={() => {
+                    setSelectedVaultId(null);
+                    setSelectedNodeId(null);
+                  }}
+                  refreshKey={nodeRefreshKey}
+                />
+              )}
+              {/* Left Resize Handle */}
+              <div
+                className={`resize-handle left-handle ${leftResizing ? "active" : ""}`}
+                onMouseDown={handleLeftResizeMouseDown}
+              />
+            </div>
+
+            <div
+              className={`pane-wrap right ${rightPaneExpanded ? "show" : ""}`}
+              style={{ width: `${rightPaneWidth}px` }}
+            >
+              {showDashboard ? (
+                <PriorityDashboard refreshKey={nodeRefreshKey} />
+              ) : showSettings ? (
+                <LlmSettings />
+              ) : (
+                <div className="right-pane-stack">
+                  <ScopeIndicator
+                    selectedNodeIds={scopeNodeIds}
+                    scope={assemblerScope}
+                    onScopeChange={setAssemblerScope}
+                  />
+                  <ActiveMemoryPanel selectedNodeIds={scopeNodeIds} />
+                  <NodeEditor
+                    selectedNodeId={selectedNodeId}
+                    onNodeDeleted={onNodeDeleted}
+                    onSaveSuccess={() => setNodeRefreshKey((value) => value + 1)}
+                    refreshKey={nodeRefreshKey}
+                    isRedactedUnlocked={isRedactedUnlocked}
+                    setIsRedactedUnlocked={setIsRedactedUnlocked}
+                  />
+                </div>
+              )}
+              {/* Right Resize Handle */}
+              <div
+                className={`resize-handle right-handle ${rightResizing ? "active" : ""}`}
+                onMouseDown={handleRightResizeMouseDown}
+              />
+            </div>
+
             {/* Left Sidebar Toggle Button */}
             <button
               className={`sidebar-toggle-btn left ${leftPaneExpanded || sidebarModalOpen ? "open" : ""}`}
@@ -368,117 +503,6 @@ function App() {
                 )}
               </svg>
             </button>
-
-            <section className="zen-canvas" onClick={onZenCanvasClick} style={zenCanvasStyle}>
-              {/* Floating segment view toggle */}
-              <div className="canvas-view-toggle-pill" onClick={(e) => e.stopPropagation()}>
-                <button
-                  className={`canvas-view-toggle-btn ${viewMode === "chat" ? "active" : ""}`}
-                  onClick={() => setViewMode("chat")}
-                >
-                  💬 Recall / Chat
-                </button>
-                <button
-                  className={`canvas-view-toggle-btn ${viewMode === "spatial" ? "active" : ""}`}
-                  onClick={() => setViewMode("spatial")}
-                >
-                  🕸️ Spatial Workspace
-                </button>
-              </div>
-
-              {viewMode === "spatial" ? (
-                <SpatialWorkspace
-                  selectedVaultId={selectedVaultId}
-                  selectedNodeId={selectedNodeId}
-                  onSelectVault={onSelectVault}
-                  onSelectNode={onSelectNode}
-                  refreshKey={vaultRefreshKey + nodeRefreshKey}
-                  onVaultCreated={onVaultCreated}
-                  onVaultDeleted={onVaultDeleted}
-                  onNodeCreated={onNodeCreated}
-                  onNodeDeleted={onNodeDeleted}
-                />
-              ) : (
-                <ChatPanel
-                  selectedNodeIds={scopeNodeIds}
-                  scope={assemblerScope}
-                  selectedVaultId={selectedVaultId}
-                  onSelectVault={onSelectVault}
-                  onOpenSettings={onOpenSettings}
-                />
-              )}
-            </section>
-
-            <div
-              className={`pane-wrap left ${leftPaneExpanded || sidebarModalOpen ? "show" : ""}`}
-              style={{ width: leftPaneWidth }}
-            >
-              {!selectedVaultId ? (
-                <VaultSidebar
-                  selectedVaultId={selectedVaultId}
-                  onSelectVault={onSelectVault}
-                  onSelectNode={onSelectNode}
-                  onVaultCreated={onVaultCreated}
-                  onVaultDeleted={onVaultDeleted}
-                  onOpenDashboard={onOpenDashboard}
-                  onOpenSettings={onOpenSettings}
-                  refreshKey={vaultRefreshKey}
-                  isRedactedUnlocked={isRedactedUnlocked}
-                  setIsRedactedUnlocked={setIsRedactedUnlocked}
-                  onModalToggle={setSidebarModalOpen}
-                />
-              ) : (
-                <NodeList
-                  selectedVaultId={selectedVaultId}
-                  selectedNodeId={selectedNodeId}
-                  onSelectNode={onSelectNode}
-                  onNodeCreated={onNodeCreated}
-                  onBack={() => {
-                    setSelectedVaultId(null);
-                    setSelectedNodeId(null);
-                  }}
-                  refreshKey={nodeRefreshKey}
-                />
-              )}
-              {/* Left Resize Handle */}
-              <div
-                className={`resize-handle left-handle ${leftResizing ? "active" : ""}`}
-                onMouseDown={handleLeftResizeMouseDown}
-              />
-            </div>
-
-            <div
-              className={`pane-wrap right ${rightPaneExpanded ? "show" : ""}`}
-              style={{ width: rightPaneWidth }}
-            >
-              {showDashboard ? (
-                <PriorityDashboard refreshKey={nodeRefreshKey} />
-              ) : showSettings ? (
-                <LlmSettings />
-              ) : (
-                <div className="right-pane-stack">
-                  <ScopeIndicator
-                    selectedNodeIds={scopeNodeIds}
-                    scope={assemblerScope}
-                    onScopeChange={setAssemblerScope}
-                  />
-                  <ActiveMemoryPanel selectedNodeIds={scopeNodeIds} />
-                  <NodeEditor
-                    selectedNodeId={selectedNodeId}
-                    onNodeDeleted={onNodeDeleted}
-                    onSaveSuccess={() => setNodeRefreshKey((value) => value + 1)}
-                    refreshKey={nodeRefreshKey}
-                    isRedactedUnlocked={isRedactedUnlocked}
-                    setIsRedactedUnlocked={setIsRedactedUnlocked}
-                  />
-                </div>
-              )}
-              {/* Right Resize Handle */}
-              <div
-                className={`resize-handle right-handle ${rightResizing ? "active" : ""}`}
-                onMouseDown={handleRightResizeMouseDown}
-              />
-            </div>
           </>
         )}
       </main>
