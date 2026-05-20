@@ -303,6 +303,13 @@ mod tests {
         }
 
         if let Err(err) = conn.execute(
+            "INSERT INTO sub_vaults (id, vault_id, privacy_tier, deleted_at) VALUES (?1, ?2, ?3, NULL);",
+            ["subvault_redacted", "vault_a", "redacted"],
+        ) {
+            panic!("failed inserting sub-vault for assembler test: {err}");
+        }
+
+        if let Err(err) = conn.execute(
             "INSERT INTO nodes (
                 id, vault_id, sub_vault_id, title, summary, detail, privacy_tier, priority, is_archived, deleted_at
             ) VALUES (?1, ?2, NULL, ?3, ?4, ?5, ?6, ?7, 0, NULL);",
@@ -353,6 +360,24 @@ mod tests {
             panic!("failed inserting node for assembler test: {err}");
         }
 
+        if let Err(err) = conn.execute(
+            "INSERT INTO nodes (
+                id, vault_id, sub_vault_id, title, summary, detail, privacy_tier, priority, is_archived, deleted_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, NULL);",
+            [
+                "node_nested_redacted",
+                "vault_a",
+                "subvault_redacted",
+                "Nested Redacted Node",
+                "nested summary",
+                "nested detail",
+                "open",
+                "{\"access_count_30active\":6}",
+            ],
+        ) {
+            panic!("failed inserting nested redacted node for assembler test: {err}");
+        }
+
         conn
     }
 
@@ -363,6 +388,7 @@ mod tests {
             "node_local_only".to_string(),
             "node_locked".to_string(),
             "node_redacted".to_string(),
+            "node_nested_redacted".to_string(),
         ];
 
         // 1. Local scope: local_only, locked should be fully included; redacted should be omitted.
@@ -386,6 +412,8 @@ mod tests {
         assert!(local_result.contains("locked detail"));
         // redacted is omitted
         assert!(!local_result.contains("Redacted Node"));
+        // nested redacted inheritance is omitted
+        assert!(!local_result.contains("Nested Redacted Node"));
 
         // 2. Cloud scope: locked is stubbed; local_only and redacted are completely omitted.
         let cloud_result = match build_context(
@@ -406,6 +434,8 @@ mod tests {
         assert!(!cloud_result.contains("Local Only Node"));
         // redacted is completely omitted
         assert!(!cloud_result.contains("Redacted Node"));
+        // nested redacted inheritance is completely omitted
+        assert!(!cloud_result.contains("Nested Redacted Node"));
     }
 
     #[test]

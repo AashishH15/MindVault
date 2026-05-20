@@ -546,7 +546,15 @@ function VaultSidebar({
     });
   }
 
-  function onOpenVaultSettings(vault: Vault) {
+  async function onOpenVaultSettings(vault: Vault) {
+    const effectiveTier = getVaultEffectivePrivacy(vault);
+    if (effectiveTier === "redacted" && !isRedactedUnlocked) {
+      const unlocked = await unlockRedactedFromSidebar();
+      if (!unlocked) {
+        return;
+      }
+    }
+
     setEditingVault(vault);
     setEditName(vault.name);
     setEditDescription(vault.description ?? "");
@@ -852,7 +860,7 @@ function VaultSidebar({
                 className="list-settings"
                 onClick={(e) => {
                   e.stopPropagation();
-                  onOpenVaultSettings(vault);
+                  void onOpenVaultSettings(vault);
                 }}
                 aria-label={`Update settings for ${vault.name}`}
               >
@@ -941,7 +949,7 @@ function VaultSidebar({
                         className="list-settings"
                         onClick={(e) => {
                           e.stopPropagation();
-                          onOpenVaultSettings(child);
+                          void onOpenVaultSettings(child);
                         }}
                         aria-label={`Update settings for ${child.name}`}
                       >
