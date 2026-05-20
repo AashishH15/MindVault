@@ -124,6 +124,28 @@ function getVaultTheme(name: string) {
   };
 }
 
+function getVaultEmoji(icon: string | null | undefined, name: string): string {
+  const iconKey = (icon || "").trim().toLowerCase();
+
+  if (iconKey) {
+    if (iconKey === "key" || iconKey === "credentials") return "💳";
+    if (iconKey === "coins" || iconKey === "finance" || iconKey === "money") return "🪙";
+    if (iconKey === "heart" || iconKey === "health" || iconKey === "fitness") return "💪";
+    if (iconKey === "book" || iconKey === "learning" || iconKey === "read") return "📚";
+    if (iconKey === "user" || iconKey === "personal") return "👤";
+    if (iconKey === "briefcase" || iconKey === "work" || iconKey === "project") return "💼";
+    if (iconKey === "home" || iconKey === "vault 1") return "🏠";
+    if (iconKey === "mobile" || iconKey === "phone" || iconKey === "cse") return "📱";
+    if (iconKey === "classes" || iconKey === "computer" || iconKey === "laptop") return "💻";
+
+    if (iconKey.length <= 2) {
+      return icon!.trim();
+    }
+  }
+
+  return getVaultTheme(name).emoji;
+}
+
 export default function SpatialWorkspace({
   selectedVaultId,
   selectedNodeId,
@@ -947,7 +969,9 @@ export default function SpatialWorkspace({
               {/* Vault card header */}
               <div className="spatial-card-header">
                 <div className="spatial-card-title-area" onClick={() => onSelectVault(vault.id)}>
-                  <span className="spatial-card-emoji">{vault.icon || theme.emoji}</span>
+                  <span className="spatial-card-emoji">
+                    {getVaultEmoji(vault.icon, vault.name)}
+                  </span>
                   {editingItemId === vault.id ? (
                     <input
                       className="spatial-card-name-input"
@@ -1126,7 +1150,7 @@ export default function SpatialWorkspace({
                           />
                         ) : (
                           <span>
-                            {subvault.icon || "📁"} {subvault.name}
+                            {getVaultEmoji(subvault.icon, subvault.name)} {subvault.name}
                           </span>
                         )}
                       </div>
