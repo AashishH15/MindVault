@@ -1,0 +1,347 @@
+use crate::onboarding::normalize_llm_json_response;
+use serde::{Deserialize, Serialize};
+
+const ALLOWED_NODE_TYPES: [&str; 8] = [
+    "concept",
+    "fact",
+    "project",
+    "preference",
+    "event",
+    "instruction",
+    "identity",
+    "summary",
+];
+
+const ALLOWED_VAULT_KEYS: [&str; 8] = [
+    "demographics",
+    "personal",
+    "interests",
+    "work",
+    "learning",
+    "health",
+    "finance",
+    "credentials",
+];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum CandidateAction {
+    #[default]
+    Add,
+    Update,
+    Delete,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct CandidateNode {
+    pub title: String,
+    pub summary: String,
+    pub detail: Option<String>,
+    pub node_type: Option<String>,
+    pub target_vault_key: Option<String>,
+    pub tags: Option<Vec<String>>,
+    pub confidence: f64,
+    pub action: CandidateAction,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CandidateEnvelope {
+    candidates: Vec<RawCandidateNode>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawCandidateNode {
+    title: String,
+    summary: String,
+    #[serde(default)]
+    detail: Option<String>,
+    #[serde(default)]
+    node_type: Option<String>,
+    #[serde(default)]
+    target_vault_key: Option<String>,
+    #[serde(default)]
+    tags: Option<Vec<String>>,
+    confidence: f64,
+    #[serde(default)]
+    action: CandidateAction,
+}
+
+fn normalize_non_empty(value: Option<String>) -> Option<String> {
+    value
+        .map(|raw| raw.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
+fn normalize_required(value: String, field_name: &str, index: usize) -> Result<String, String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(format!(
+            "Candidate {} has empty required field '{}'",
+            index + 1,
+            field_name
+        ));
+    }
+    Ok(trimmed.to_string())
+}
+
+fn validate_node_type(value: Option<String>, index: usize) -> Result<Option<String>, String> {
+    let Some(raw_value) = value else {
+        return Ok(None);
+    };
+    let normalized = raw_value.trim().to_lowercase();
+    if normalized.is_empty() {
+        return Ok(None);
+    }
+    if ALLOWED_NODE_TYPES.contains(&normalized.as_str()) {
+        Ok(Some(normalized))
+    } else {
+        Err(format!(
+            "Candidate {} has unsupported node_type '{}'",
+            index + 1,
+            raw_value
+        ))
+    }
+}
+
+fn validate_target_vault_key(
+    value: Option<String>,
+    index: usize,
+) -> Result<Option<String>, String> {
+    let Some(raw_value) = value else {
+        return Ok(None);
+    };
+    let normalized = raw_value.trim().to_lowercase();
+    if normalized.is_empty() {
+        return Ok(None);
+    }
+    if ALLOWED_VAULT_KEYS.contains(&normalized.as_str()) {
+        Ok(Some(normalized))
+    } else {
+        Err(format!(
+            "Candidate {} has unsupported target_vault_key '{}'",
+            index + 1,
+            raw_value
+        ))
+    }
+}
+
+fn normalize_tags(tags: Option<Vec<String>>, index: usize) -> Result<Option<Vec<String>>, String> {
+    let Some(values) = tags else {
+        return Ok(None);
+    };
+
+    let mut normalized = Vec::new();
+    for tag in values {
+        let trimmed = tag.trim();
+        if trimmed.is_empty() {
+            return Err(format!("Candidate {} includes an empty tag", index + 1));
+        }
+        normalized.push(trimmed.to_string());
+    }
+
+    if normalized.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(normalized))
+    }
+}
+
+/// Parse strict memory extraction candidate JSON.
+pub fn parse_candidates_json(raw_json: &str) -> Result<Vec<CandidateNode>, String> {
+    let envelope: CandidateEnvelope =
+        serde_json::from_str(raw_json).map_err(|err| format!("Invalid candidates JSON: {err}"))?;
+
+    envelope
+        .candidates
+        .into_iter()
+        .enumerate()
+        .map(|(index, raw)| {
+            let title = normalize_required(raw.title, "title", index)?;
+            let summary = normalize_required(raw.summary, "summary", index)?;
+            let detail = normalize_non_empty(raw.detail);
+            let node_type = validate_node_type(raw.node_type, index)?;
+            let target_vault_key = validate_target_vault_key(raw.target_vault_key, index)?;
+            let tags = normalize_tags(raw.tags, index)?;
+
+            // Clamp confidence score to 0.0 - 1.0
+            let confidence = raw.confidence.clamp(0.0, 1.0);
+
+            Ok(CandidateNode {
+                title,
+                summary,
+                detail,
+                node_type,
+                target_vault_key,
+                tags,
+                confidence,
+                action: raw.action,
+            })
+        })
+        .collect()
+}
+
+/// Normalize and parse LLM-generated memory candidates output (removes fences if present).
+pub fn parse_candidates_from_llm_output(
+    raw_model_output: &str,
+) -> Result<Vec<CandidateNode>, String> {
+    let normalized = normalize_llm_json_response(raw_model_output);
+    parse_candidates_json(&normalized)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_valid_candidates_golden() {
+        let payload = r#"{
+  "candidates": [
+    {
+      "action": "add",
+      "title": "Loves hiking",
+      "summary": "Enjoys outdoor hiking in summer.",
+      "detail": "Usually goes on weekends",
+      "node_type": "preference",
+      "target_vault_key": "personal",
+      "tags": ["outdoors", "hobbies"],
+      "confidence": 0.95
+    },
+    {
+      "action": "update",
+      "title": "Primary project name",
+      "summary": "Project is now named MindVault.",
+      "confidence": 1.0
+    },
+    {
+      "action": "delete",
+      "title": "Old address",
+      "summary": "Moved out of San Francisco.",
+      "confidence": 0.8
+    }
+  ]
+}"#;
+
+        let parsed = match parse_candidates_json(payload) {
+            Ok(val) => val,
+            Err(err) => panic!("Expected valid candidates: {err}"),
+        };
+        assert_eq!(parsed.len(), 3);
+
+        assert_eq!(parsed[0].action, CandidateAction::Add);
+        assert_eq!(parsed[0].title, "Loves hiking");
+        assert_eq!(parsed[0].summary, "Enjoys outdoor hiking in summer.");
+        assert_eq!(
+            parsed[0].detail.as_deref(),
+            Some("Usually goes on weekends")
+        );
+        assert_eq!(parsed[0].node_type.as_deref(), Some("preference"));
+        assert_eq!(parsed[0].target_vault_key.as_deref(), Some("personal"));
+        assert_eq!(
+            parsed[0].tags,
+            Some(vec!["outdoors".to_string(), "hobbies".to_string()])
+        );
+        assert_eq!(parsed[0].confidence, 0.95);
+
+        assert_eq!(parsed[1].action, CandidateAction::Update);
+        assert_eq!(parsed[1].title, "Primary project name");
+        assert_eq!(parsed[1].summary, "Project is now named MindVault.");
+        assert_eq!(parsed[1].confidence, 1.0);
+
+        assert_eq!(parsed[2].action, CandidateAction::Delete);
+        assert_eq!(parsed[2].title, "Old address");
+        assert_eq!(parsed[2].summary, "Moved out of San Francisco.");
+        assert_eq!(parsed[2].confidence, 0.8);
+    }
+
+    #[test]
+    fn parse_empty_candidates() {
+        let payload = r#"{"candidates":[]}"#;
+        let parsed = match parse_candidates_json(payload) {
+            Ok(val) => val,
+            Err(err) => panic!("Expected empty candidates to parse: {err}"),
+        };
+        assert!(parsed.is_empty());
+    }
+
+    #[test]
+    fn parse_missing_required_title() {
+        let payload = r#"{
+  "candidates": [
+    {
+      "summary": "Enjoys outdoor hiking in summer.",
+      "confidence": 0.9
+    }
+  ]
+}"#;
+        let err = match parse_candidates_json(payload) {
+            Ok(_) => panic!("expected missing required field payload to fail"),
+            Err(e) => e,
+        };
+        assert!(err.contains("Invalid candidates JSON") || err.contains("missing field `title`"));
+    }
+
+    #[test]
+    fn parse_rejects_unknown_fields() {
+        let payload = r#"{
+  "candidates": [
+    {
+      "title": "Hiking",
+      "summary": "Enjoys outdoor hiking.",
+      "confidence": 0.9,
+      "unsupported_extra_field": "oops"
+    }
+  ]
+}"#;
+        let err = match parse_candidates_json(payload) {
+            Ok(_) => panic!("expected unknown field payload to fail"),
+            Err(e) => e,
+        };
+        assert!(err.contains("unknown field `unsupported_extra_field`"));
+    }
+
+    #[test]
+    fn parse_invalid_node_type() {
+        let payload = r#"{
+  "candidates": [
+    {
+      "title": "Hiking",
+      "summary": "Enjoys outdoor hiking.",
+      "node_type": "super_fancy_type",
+      "confidence": 0.9
+    }
+  ]
+}"#;
+        let err = match parse_candidates_json(payload) {
+            Ok(_) => panic!("expected invalid node type to fail"),
+            Err(e) => e,
+        };
+        assert!(err.contains("unsupported node_type 'super_fancy_type'"));
+    }
+
+    #[test]
+    fn parse_confidence_clamping() {
+        let payload = r#"{
+  "candidates": [
+    {
+      "title": "High confidence",
+      "summary": "This is a fact.",
+      "confidence": 2.5
+    },
+    {
+      "title": "Low confidence",
+      "summary": "This is a rumor.",
+      "confidence": -0.5
+    }
+  ]
+}"#;
+        let parsed = match parse_candidates_json(payload) {
+            Ok(val) => val,
+            Err(err) => panic!("Expected confidence clamping candidates to parse: {err}"),
+        };
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].confidence, 1.0);
+        assert_eq!(parsed[1].confidence, 0.0);
+    }
+}

@@ -12,6 +12,7 @@ mod auth;
 mod chat;
 pub mod ipc_types;
 pub mod llm;
+pub mod memory_agent;
 pub mod onboarding;
 mod priority;
 mod privacy;
