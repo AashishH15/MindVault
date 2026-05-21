@@ -21,6 +21,7 @@ export type ChatMessage = {
   role: string;
   content: string;
   created_at: string;
+  isStreaming?: boolean;
 };
 export type {
   Backlink,
