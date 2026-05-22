@@ -64,8 +64,11 @@
   box-shadow: 0 2px 8px rgba(188, 108, 37, 0.06);
 }
 
-.hybrid-shell.modal-open .sidebar-toggle-btn {
-  display: none;
+.hybrid-shell.modal-open .sidebar-toggle-btn,
+.hybrid-shell.modal-open .canvas-view-toggle-pill,
+.hybrid-shell:has(.charts-modal-overlay) .sidebar-toggle-btn,
+.hybrid-shell:has(.charts-modal-overlay) .canvas-view-toggle-pill {
+  display: none !important;
 }
 
 .sidebar-toggle-btn:hover {

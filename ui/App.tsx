@@ -144,6 +144,7 @@ function App() {
   const [sidebarModalOpen, setSidebarModalOpen] = useState<boolean>(false);
   const [editorModalOpen, setEditorModalOpen] = useState<boolean>(false);
   const [spatialModalOpen, setSpatialModalOpen] = useState<boolean>(false);
+  const [chatModalOpen, setChatModalOpen] = useState<boolean>(false);
   const [viewMode, setViewMode] = useState<"chat" | "spatial">("chat");
   const leftPaneExpanded = leftPanePinned && !selectedVaultRequiresUnlock;
   const rightPaneExpanded = rightPanePinned;
@@ -329,7 +330,7 @@ function App() {
   return (
     <ErrorBoundary>
       <main
-        className={`hybrid-shell ${leftPanePinned ? "left-pinned" : ""} ${rightPanePinned ? "right-pinned" : ""} ${sidebarModalOpen || editorModalOpen || spatialModalOpen ? "modal-open" : ""} ${leftResizing || rightResizing ? "is-resizing" : ""}`}
+        className={`hybrid-shell ${leftPanePinned ? "left-pinned" : ""} ${rightPanePinned ? "right-pinned" : ""} ${sidebarModalOpen || editorModalOpen || spatialModalOpen || chatModalOpen ? "modal-open" : ""} ${leftResizing || rightResizing ? "is-resizing" : ""}`}
       >
         {!onboardingResolved ? (
           <section className="onboarding-shell">
@@ -394,6 +395,7 @@ function App() {
                   selectedVaultId={selectedVaultId}
                   onSelectVault={onSelectVault}
                   onOpenSettings={onOpenSettings}
+                  onModalToggle={setChatModalOpen}
                 />
               )}
             </section>

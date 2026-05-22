@@ -1,5 +1,13 @@
-import React, { useEffect, useMemo, useState, useRef, type KeyboardEvent } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  useRef,
+  type KeyboardEvent,
+} from "react";
 import ReactMarkdown from "react-markdown";
+import ChartBlock from "./ChartBlock";
 import remarkGfm from "remark-gfm";
 import {
   TbBrandPython,
@@ -36,6 +44,8 @@ import {
   getLlmMode,
   setLlmMode,
   getApiKey,
+  getChartsEnabled,
+  setChartsEnabled,
 } from "../utils/settings";
 
 type CodeBlockProps = {
@@ -154,12 +164,249 @@ function CodeBlock({ language, code }: CodeBlockProps) {
   );
 }
 
+// Stable module-level ReactMarkdown components override factory — avoids creating new
+// function references on every render cycle unless chartsEnabled actually changes,
+// which preserves the keystroke performance fix while enabling toggleability.
+function createMarkdownComponents(chartsEnabled: boolean) {
+  return {
+    pre({
+      children,
+      ...props
+    }: React.ClassAttributes<HTMLPreElement> &
+      React.HTMLAttributes<HTMLPreElement> & { node?: unknown }) {
+      const childrenArray = React.Children.toArray(children);
+      const codeChild = childrenArray.find(
+        (
+          child
+        ): child is React.ReactElement<{
+          className?: string;
+          children?: React.ReactNode;
+        }> => React.isValidElement(child) && child.type === "code"
+      );
+
+      if (codeChild) {
+        const codeProps = codeChild.props;
+        const className = codeProps.className || "";
+        const match = /language-([\w-]+)/.exec(className);
+        const language = match ? match[1] : "";
+
+        const codeContent = codeProps.children;
+        const codeString =
+          typeof codeContent === "string"
+            ? codeContent
+            : Array.isArray(codeContent)
+              ? codeContent.join("")
+              : String(codeContent || "");
+
+        const isChart =
+          chartsEnabled &&
+          (language === "chart" || language === "plotly" || language.startsWith("chart-"));
+
+        if (isChart) {
+          return <ChartBlock language={language} code={codeString.replace(/\n$/, "")} />;
+        }
+
+        return <CodeBlock language={language} code={codeString.replace(/\n$/, "")} />;
+      }
+
+      return <pre {...props}>{children}</pre>;
+    },
+  };
+}
+
+const remarkPluginsStable = [remarkGfm];
+
+// Memoized individual message bubble — prevents re-rendering existing messages
+// when unrelated parent state (e.g. input text) changes. Each bubble only
+// re-renders when its own content, editing state, or copy state changes.
+type ChatMessageBubbleProps = {
+  message: ChatMessage;
+  index: number;
+  isEditing: boolean;
+  editingContent: string;
+  isCopied: boolean;
+  editInputRef: React.RefObject<HTMLTextAreaElement | null>;
+  onSetEditingContent: (value: string) => void;
+  onCancelEdit: () => void;
+  onSaveEdit: (index: number, content: string) => void;
+  onCopyMessage: (content: string, id: string) => void;
+  onRetryMessage: (index: number) => void;
+  onStartEdit: (messageId: string, content: string) => void;
+  chartsEnabled: boolean;
+};
+
+const ChatMessageBubble = React.memo(function ChatMessageBubble({
+  message,
+  index,
+  isEditing,
+  editingContent,
+  isCopied,
+  editInputRef,
+  onSetEditingContent,
+  onCancelEdit,
+  onSaveEdit,
+  onCopyMessage,
+  onRetryMessage,
+  onStartEdit,
+  chartsEnabled,
+}: ChatMessageBubbleProps) {
+  const markdownComponents = React.useMemo(() => {
+    return createMarkdownComponents(chartsEnabled);
+  }, [chartsEnabled]);
+
+  return (
+    <article className={`chat-message chat-message-${message.role}`}>
+      {message.role === "assistant" && <div className="chat-avatar">MV</div>}
+      <div className="chat-bubble-container">
+        <div className="chat-bubble">
+          {isEditing ? (
+            <div className="chat-bubble-edit-container">
+              <textarea
+                ref={editInputRef}
+                className="chat-bubble-edit-textarea"
+                value={editingContent}
+                onChange={(e) => onSetEditingContent(e.target.value)}
+                autoFocus
+              />
+              <div className="chat-bubble-edit-actions">
+                <button
+                  type="button"
+                  className="chat-bubble-edit-btn cancel"
+                  onClick={onCancelEdit}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="chat-bubble-edit-btn save"
+                  onClick={() => void onSaveEdit(index, editingContent)}
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+          ) : (
+            <ReactMarkdown remarkPlugins={remarkPluginsStable} components={markdownComponents}>
+              {message.content}
+            </ReactMarkdown>
+          )}
+          {message.isStreaming && <span className="streaming-cursor" />}
+        </div>
+        {message.role === "assistant" && !message.isStreaming && (
+          <div className="chat-bubble-actions">
+            <button
+              type="button"
+              className="chat-action-btn"
+              onClick={() => onCopyMessage(message.content, message.id)}
+              title="Copy message"
+            >
+              {isCopied ? (
+                <svg
+                  width="15"
+                  height="15"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+              ) : (
+                <svg
+                  width="15"
+                  height="15"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                </svg>
+              )}
+            </button>
+            <button
+              type="button"
+              className="chat-action-btn"
+              onClick={() => onRetryMessage(index)}
+              title="Retry response"
+            >
+              <svg
+                width="15"
+                height="15"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <polyline points="23 4 23 10 17 10"></polyline>
+                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+              </svg>
+            </button>
+          </div>
+        )}
+        {message.role === "user" && !isEditing && (
+          <div className="chat-bubble-actions">
+            <button
+              type="button"
+              className="chat-action-btn"
+              onClick={() => onStartEdit(message.id, message.content)}
+              title="Edit message"
+            >
+              <svg
+                width="15"
+                height="15"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M12 20h9"></path>
+                <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
+              </svg>
+            </button>
+            <button
+              type="button"
+              className="chat-action-btn"
+              onClick={() => onRetryMessage(index)}
+              title="Retry response"
+            >
+              <svg
+                width="15"
+                height="15"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <polyline points="23 4 23 10 17 10"></polyline>
+                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+              </svg>
+            </button>
+          </div>
+        )}
+      </div>
+    </article>
+  );
+});
+
 type ChatPanelProps = {
   selectedNodeIds: string[];
   scope: ContextAssemblerScope;
   selectedVaultId: string | null;
   onSelectVault: (vaultId: string | null) => void;
   onOpenSettings?: () => void;
+  onModalToggle?: (isOpen: boolean) => void;
 };
 
 function ChatPanel({
@@ -168,6 +415,7 @@ function ChatPanel({
   selectedVaultId,
   onSelectVault,
   onOpenSettings,
+  onModalToggle,
 }: ChatPanelProps) {
   const MAX_RENDERED_MESSAGES = 120;
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -187,9 +435,24 @@ function ChatPanel({
   const [currentProvider, setCurrentProvider] = useState(() => getLlmProvider());
   const [currentModel, setCurrentModel] = useState(() => getLlmModel());
   const [currentMode, setCurrentMode] = useState(() => getLlmMode());
+  const [chartsEnabled, setChartsEnabledState] = useState(() => getChartsEnabled());
+  const [showChartsConfirmModal, setShowChartsConfirmModal] = useState(false);
+
+  useEffect(() => {
+    onModalToggle?.(showChartsConfirmModal);
+  }, [showChartsConfirmModal, onModalToggle]);
   const [activeDropdown, setActiveDropdown] = useState<
     "vault" | "mode" | "model" | "overflow" | null
   >(null);
+
+  const handleToggleCharts = useCallback(() => {
+    if (chartsEnabled) {
+      setChartsEnabled(false);
+      setChartsEnabledState(false);
+    } else {
+      setShowChartsConfirmModal(true);
+    }
+  }, [chartsEnabled]);
 
   const threadEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -262,6 +525,7 @@ function ChatPanel({
       setCurrentProvider(getLlmProvider());
       setCurrentModel(getLlmModel());
       setCurrentMode(getLlmMode());
+      setChartsEnabledState(getChartsEnabled());
     }
     window.addEventListener("mindvault:llm-settings-changed", handleSettingsChange);
     return () => {
@@ -363,7 +627,8 @@ function ChatPanel({
         provider,
         endpoint,
         model,
-        executionPrompt
+        executionPrompt,
+        chartsEnabled
       );
 
       const aiMsgId = crypto.randomUUID();
@@ -457,7 +722,7 @@ function ChatPanel({
     }
   }
 
-  async function handleCopyMessage(content: string, id: string) {
+  const handleCopyMessage = useCallback(async (content: string, id: string) => {
     try {
       await navigator.clipboard.writeText(content);
       setCopiedMessageId(id);
@@ -465,17 +730,17 @@ function ChatPanel({
     } catch (err) {
       console.error("Failed to copy", err);
     }
-  }
+  }, []);
 
-  function handleStartEdit(messageId: string, content: string) {
+  const handleStartEdit = useCallback((messageId: string, content: string) => {
     setEditingMessageId(messageId);
     setEditingContent(content);
-  }
+  }, []);
 
-  function handleCancelEdit() {
+  const handleCancelEdit = useCallback(() => {
     setEditingMessageId(null);
     setEditingContent("");
-  }
+  }, []);
 
   async function handleSaveEdit(index: number, newContent: string) {
     if (isSending || isClearing || !newContent.trim()) return;
@@ -756,9 +1021,120 @@ function ChatPanel({
                 </div>
               )}
             </div>
+            {/* Overflow dropdown trigger */}
+            <div
+              className="zen-pill-container overflow-container"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button
+                type="button"
+                className={`compact-pill-more ${activeDropdown === "overflow" ? "active" : ""}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  toggleDropdown("overflow");
+                }}
+                aria-label="More options"
+              >
+                ···
+              </button>
+              {activeDropdown === "overflow" && (
+                <div className="zen-dropdown overflow-dropdown">
+                  <button
+                    type="button"
+                    className="zen-dropdown-item new-chat-item"
+                    onClick={() => {
+                      setActiveDropdown(null);
+                      void handleNewChat();
+                    }}
+                  >
+                    <span className="item-icon">✨</span>
+                    <div className="item-details">
+                      <div className="item-title">New Chat</div>
+                      <div className="item-desc">Start a fresh conversation</div>
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    className={`zen-dropdown-item charts-toggle-item ${chartsEnabled ? "selected" : ""}`}
+                    onClick={() => {
+                      setActiveDropdown(null);
+                      handleToggleCharts();
+                    }}
+                  >
+                    <span className="item-icon">{chartsEnabled ? "📊" : "📈"}</span>
+                    <div className="item-details">
+                      <div className="item-title">
+                        Interactive Charts: {chartsEnabled ? "ON" : "OFF"}
+                      </div>
+                      <div className="item-desc">
+                        Toggle mathematical and statistical visualizations
+                      </div>
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    className="zen-dropdown-item danger-item"
+                    onClick={() => {
+                      setActiveDropdown(null);
+                      void handleClearChat();
+                    }}
+                  >
+                    <span className="item-icon">🗑️</span>
+                    <div className="item-details">
+                      <div className="item-title">Delete Chat History</div>
+                      <div className="item-desc">Permanently erase all messages</div>
+                    </div>
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
           {status && <p className="chat-status">{status}</p>}
         </div>
+        {showChartsConfirmModal && (
+          <div className="charts-modal-overlay" onClick={() => setShowChartsConfirmModal(false)}>
+            <div className="charts-modal-card" onClick={(e) => e.stopPropagation()}>
+              <div className="charts-modal-header">
+                <span className="charts-modal-icon">⚠️</span>
+                <h3 className="charts-modal-title">Enable Experimental Charts?</h3>
+              </div>
+              <div className="charts-modal-body">
+                <p className="charts-modal-text warning-lead">
+                  Chart generation is highly experimental and does not perform well with
+                  smaller/local LLMs (e.g. Ollama 7B/8B), which frequently output invalid JSON
+                  schemas.
+                </p>
+                <p className="charts-modal-text recommendation-note">
+                  For reliable, high-quality interactive plots and mathematical visualizations, we
+                  strongly recommend choosing advanced cloud models such as{" "}
+                  <strong>Claude 4.6 Sonnet</strong> or <strong>GPT-5.4</strong> or larger local
+                  models.
+                </p>
+                <p className="charts-modal-question">Would you like to enable charts anyway?</p>
+              </div>
+              <div className="charts-modal-actions">
+                <button
+                  type="button"
+                  className="charts-modal-btn cancel-btn"
+                  onClick={() => setShowChartsConfirmModal(false)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="charts-modal-btn confirm-btn"
+                  onClick={() => {
+                    setChartsEnabled(true);
+                    setChartsEnabledState(true);
+                    setShowChartsConfirmModal(false);
+                  }}
+                >
+                  Enable Charts
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </section>
     );
   }
@@ -774,184 +1150,22 @@ function ChatPanel({
         ) : null}
         <div className="chat-messages-container">
           {visibleMessages.map((message, index) => (
-            <article key={message.id} className={`chat-message chat-message-${message.role}`}>
-              {message.role === "assistant" && <div className="chat-avatar">MV</div>}
-              <div className="chat-bubble-container">
-                <div className="chat-bubble">
-                  {editingMessageId === message.id ? (
-                    <div className="chat-bubble-edit-container">
-                      <textarea
-                        ref={editInputRef}
-                        className="chat-bubble-edit-textarea"
-                        value={editingContent}
-                        onChange={(e) => setEditingContent(e.target.value)}
-                        autoFocus
-                      />
-                      <div className="chat-bubble-edit-actions">
-                        <button
-                          type="button"
-                          className="chat-bubble-edit-btn cancel"
-                          onClick={handleCancelEdit}
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          type="button"
-                          className="chat-bubble-edit-btn save"
-                          onClick={() => void handleSaveEdit(index, editingContent)}
-                        >
-                          Save
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <ReactMarkdown
-                      remarkPlugins={[remarkGfm]}
-                      components={{
-                        pre({ children, ...props }) {
-                          const childrenArray = React.Children.toArray(children);
-                          const codeChild = childrenArray.find(
-                            (
-                              child
-                            ): child is React.ReactElement<{
-                              className?: string;
-                              children?: React.ReactNode;
-                            }> => React.isValidElement(child) && child.type === "code"
-                          );
-
-                          if (codeChild) {
-                            const codeProps = codeChild.props;
-                            const className = codeProps.className || "";
-                            const match = /language-(\w+)/.exec(className);
-                            const language = match ? match[1] : "";
-
-                            const codeContent = codeProps.children;
-                            const codeString =
-                              typeof codeContent === "string"
-                                ? codeContent
-                                : Array.isArray(codeContent)
-                                  ? codeContent.join("")
-                                  : String(codeContent || "");
-
-                            return (
-                              <CodeBlock language={language} code={codeString.replace(/\n$/, "")} />
-                            );
-                          }
-
-                          return <pre {...props}>{children}</pre>;
-                        },
-                      }}
-                    >
-                      {message.content}
-                    </ReactMarkdown>
-                  )}
-                  {message.isStreaming && <span className="streaming-cursor" />}
-                </div>
-                {message.role === "assistant" && !message.isStreaming && (
-                  <div className="chat-bubble-actions">
-                    <button
-                      type="button"
-                      className="chat-action-btn"
-                      onClick={() => handleCopyMessage(message.content, message.id)}
-                      title="Copy message"
-                    >
-                      {copiedMessageId === message.id ? (
-                        <svg
-                          width="15"
-                          height="15"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        >
-                          <polyline points="20 6 9 17 4 12"></polyline>
-                        </svg>
-                      ) : (
-                        <svg
-                          width="15"
-                          height="15"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        >
-                          <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                        </svg>
-                      )}
-                    </button>
-                    <button
-                      type="button"
-                      className="chat-action-btn"
-                      onClick={() => handleRetryMessage(index)}
-                      title="Retry response"
-                    >
-                      <svg
-                        width="15"
-                        height="15"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <polyline points="23 4 23 10 17 10"></polyline>
-                        <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
-                      </svg>
-                    </button>
-                  </div>
-                )}
-                {message.role === "user" && editingMessageId !== message.id && (
-                  <div className="chat-bubble-actions">
-                    <button
-                      type="button"
-                      className="chat-action-btn"
-                      onClick={() => handleStartEdit(message.id, message.content)}
-                      title="Edit message"
-                    >
-                      <svg
-                        width="15"
-                        height="15"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <path d="M12 20h9"></path>
-                        <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
-                      </svg>
-                    </button>
-                    <button
-                      type="button"
-                      className="chat-action-btn"
-                      onClick={() => handleRetryMessage(index)}
-                      title="Retry response"
-                    >
-                      <svg
-                        width="15"
-                        height="15"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <polyline points="23 4 23 10 17 10"></polyline>
-                        <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
-                      </svg>
-                    </button>
-                  </div>
-                )}
-              </div>
-            </article>
+            <ChatMessageBubble
+              key={message.id}
+              message={message}
+              index={index}
+              isEditing={editingMessageId === message.id}
+              editingContent={editingContent}
+              isCopied={copiedMessageId === message.id}
+              editInputRef={editInputRef}
+              onSetEditingContent={setEditingContent}
+              onCancelEdit={handleCancelEdit}
+              onSaveEdit={handleSaveEdit}
+              onCopyMessage={handleCopyMessage}
+              onRetryMessage={handleRetryMessage}
+              onStartEdit={handleStartEdit}
+              chartsEnabled={chartsEnabled}
+            />
           ))}
           {isSending && (
             <article className="chat-message chat-message-assistant loading-message">
@@ -1167,6 +1381,24 @@ function ChatPanel({
                 </button>
                 <button
                   type="button"
+                  className={`zen-dropdown-item charts-toggle-item ${chartsEnabled ? "selected" : ""}`}
+                  onClick={() => {
+                    setActiveDropdown(null);
+                    handleToggleCharts();
+                  }}
+                >
+                  <span className="item-icon">{chartsEnabled ? "📊" : "📈"}</span>
+                  <div className="item-details">
+                    <div className="item-title">
+                      Interactive Charts: {chartsEnabled ? "ON" : "OFF"}
+                    </div>
+                    <div className="item-desc">
+                      Toggle mathematical and statistical visualizations
+                    </div>
+                  </div>
+                </button>
+                <button
+                  type="button"
                   className="zen-dropdown-item danger-item"
                   onClick={() => {
                     setActiveDropdown(null);
@@ -1207,6 +1439,49 @@ function ChatPanel({
         </div>
       </div>
       {status && <p className="chat-status">{status}</p>}
+      {showChartsConfirmModal && (
+        <div className="charts-modal-overlay" onClick={() => setShowChartsConfirmModal(false)}>
+          <div className="charts-modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="charts-modal-header">
+              <span className="charts-modal-icon">⚠️</span>
+              <h3 className="charts-modal-title">Enable Experimental Charts?</h3>
+            </div>
+            <div className="charts-modal-body">
+              <p className="charts-modal-text warning-lead">
+                Chart generation is highly experimental and does not perform well with smaller/local
+                LLMs (e.g. Ollama 7B/8B), which frequently output invalid JSON schemas.
+              </p>
+              <p className="charts-modal-text recommendation-note">
+                For reliable, high-quality interactive plots and mathematical visualizations, we
+                strongly recommend choosing advanced cloud models such as{" "}
+                <strong>Claude 4.6 Sonnet</strong> or <strong>GPT-5.4</strong> or larger local
+                models.
+              </p>
+              <p className="charts-modal-question">Would you like to enable charts anyway?</p>
+            </div>
+            <div className="charts-modal-actions">
+              <button
+                type="button"
+                className="charts-modal-btn cancel-btn"
+                onClick={() => setShowChartsConfirmModal(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="charts-modal-btn confirm-btn"
+                onClick={() => {
+                  setChartsEnabled(true);
+                  setChartsEnabledState(true);
+                  setShowChartsConfirmModal(false);
+                }}
+              >
+                Enable Charts
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }

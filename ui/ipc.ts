@@ -228,7 +228,8 @@ export function chatWithLlm(
   provider: string,
   endpoint: string,
   model: string,
-  userPrompt: string
+  userPrompt: string,
+  chartsEnabled: boolean
 ) {
   return invoke<string>("llm_chat", {
     nodeIds,
@@ -237,6 +238,7 @@ export function chatWithLlm(
     endpoint,
     model,
     userPrompt,
+    chartsEnabled,
   })
     .then((ok) => ({ ok }) as IpcResult<string>)
     .catch((error) => ({ err: String(error) }) as IpcResult<string>);

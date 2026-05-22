@@ -109,3 +109,15 @@ export function setApiKey(provider: string, key: string): void {
   window.localStorage.setItem(`mindvault.llm.${provider}.apikey`, key.trim());
   window.dispatchEvent(new CustomEvent("mindvault:llm-settings-changed"));
 }
+
+const CHARTS_ENABLED_KEY = "mindvault.llm.charts.enabled";
+
+export function getChartsEnabled(): boolean {
+  const value = window.localStorage.getItem(CHARTS_ENABLED_KEY);
+  return value === "true";
+}
+
+export function setChartsEnabled(enabled: boolean): void {
+  window.localStorage.setItem(CHARTS_ENABLED_KEY, enabled ? "true" : "false");
+  window.dispatchEvent(new CustomEvent("mindvault:llm-settings-changed"));
+}

@@ -2028,6 +2028,7 @@ async fn llm_list_models(provider: String, endpoint: String) -> IpcResponse<Vec<
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 async fn llm_chat(
     node_ids: Vec<String>,
     scope: String,
@@ -2035,11 +2036,12 @@ async fn llm_chat(
     endpoint: String,
     model: String,
     user_prompt: String,
+    charts_enabled: bool,
     state: tauri::State<'_, AppState>,
 ) -> Result<String, String> {
     let db_path = state.db_path.clone();
 
-    let system_prompt_from_assembler = {
+    let mut system_prompt = {
         let conn = open_connection(&db_path)?;
         llm::assembler::build_context(
             &conn,
@@ -2050,6 +2052,62 @@ async fn llm_chat(
             },
         )
     }?;
+
+    let chart_instruction = "\n\n\
+    [VISUALIZATION SYSTEM CONTRACT]\n\
+    You have access to an interactive charting system. When a user EXPLICITLY asks you to graph, plot, chart, or visualize something, output the specification as JSON inside a ```chart code fence. Never use text-based ASCII art representations.\n\
+    \n\
+    CRITICAL: ONLY output a ```chart fence when the user's intent is to SEE a visual graph or chart. If the user asks you to SOLVE, EXPLAIN, COMPUTE, EVALUATE, PROVE, DERIVE, or CALCULATE something, respond with a normal text/markdown explanation showing your work and the answer. You MAY optionally append a ```chart fence AFTER your explanation if a graph would help illustrate the result, but the textual answer must come first and must be complete on its own.\n\
+    \n\
+    PROMPT DIRECTIVES:\n\
+    1. GRAPH/PLOT REQUESTS: When the user says 'graph', 'plot', 'chart', 'visualize', 'show me a graph of', or similar — output the ```chart fence directly as the primary response. Keep any surrounding text minimal.\n\
+    2. SOLVE/EXPLAIN REQUESTS: When the user says 'solve', 'evaluate', 'compute', 'integrate', 'differentiate', 'prove', 'explain', 'help me with', 'what is', 'calculate', 'find' — write a full textual solution in markdown. Use LaTeX math notation ($$...$$ or $...$) for equations. You may add a ```chart fence at the end to illustrate, but it is optional.\n\
+    3. STRING COLUMNS ARE NOT NUMERIC VALUES: When plotting datasets, columns with text/string values MUST be used as labels or categorical axes (e.g. in the 'x' array, 'labels' array, or 'theta' array). NEVER put string arrays into numeric arrays (like 'y', 'r', or 'values').\n\
+    4. PIE CHART STRUCTURE: Plotly pie charts MUST use 'labels' and 'values' inside the trace. NEVER use 'x' and 'y' for pie charts. Example: { \"type\": \"pie\", \"labels\": [\"A\", \"B\"], \"values\": [40, 60] }.\n\
+    5. RADAR CHART STRUCTURE: Plotly radar charts MUST use \"scatterpolar\" with 'r' and 'theta'. Close the polygon by repeating the first element at the end of both arrays.\n\
+    6. DO NOT ATTEMPT UNSUPPORTED DIAGRAMS: If the user requests Venn diagrams, flowcharts, mind maps, Gantt charts, network graphs, or 3D surface charts, explain the limitation in plain text. Never approximate with scatter/bubble overlays.\n\
+    \n\
+    CHART SCHEMA TYPES:\n\
+    \n\
+    1. For mathematical equations or functions (e.g., y = 2x + 1), output type \"function\":\n\
+    ```chart\n\
+    {\n\
+      \"type\": \"function\",\n\
+      \"title\": \"y = 2x + 1\",\n\
+      \"expressions\": [\n\
+        { \"expression\": \"2*x + 1\", \"color\": \"#b56a37\", \"label\": \"y = 2x + 1\" }\n\
+      ],\n\
+      \"domainX\": [-5, 5],\n\
+      \"domainY\": [-5, 5]\n\
+    }\n\
+    ```\n\
+    \n\
+    2. For statistical data (bar, line, pie, scatterpolar), output a Plotly.js JSON with \"data\" and optional \"layout\":\n\
+    ```chart\n\
+    {\n\
+      \"type\": \"plotly\",\n\
+      \"data\": [\n\
+        { \"x\": [\"Apples\", \"Bananas\", \"Cherries\"], \"y\": [12, 18, 5], \"type\": \"bar\", \"marker\": { \"color\": \"#b56a37\" } }\n\
+      ],\n\
+      \"layout\": {\n\
+        \"title\": \"Fruit Counts\"\n\
+      }\n\
+    }\n\
+    ```\n\
+    Always output fully valid JSON (double quotes for keys and string values). Do not embed comments inside the JSON.";
+
+    if charts_enabled {
+        if system_prompt.is_empty() {
+            system_prompt = format!(
+                "You are MindVault's personalized, context-aware memory assistant. {chart_instruction}"
+            );
+        } else {
+            system_prompt.push_str(chart_instruction);
+        }
+    } else if system_prompt.is_empty() {
+        system_prompt =
+            "You are MindVault's personalized, context-aware memory assistant.".to_string();
+    }
 
     let parsed_provider = match provider.trim().to_lowercase().as_str() {
         "ollama" => llm::client::LlmProvider::Ollama,
@@ -2066,7 +2124,7 @@ async fn llm_chat(
         role: "user".to_string(),
         content: user_prompt,
     }];
-    llm::client::LlmClient::complete(&client, &system_prompt_from_assembler, &messages).await
+    llm::client::LlmClient::complete(&client, &system_prompt, &messages).await
 }
 
 fn map_onboarding_proposed(node: crate::onboarding::ProposedNode) -> OnboardingProposedNode {
