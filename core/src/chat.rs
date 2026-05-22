@@ -82,3 +82,25 @@ pub fn clear_chat_history(db: &Connection) -> Result<(), crate::AppError> {
 
     Ok(())
 }
+
+pub fn edit_and_truncate(
+    db: &Connection,
+    edit_id: &str,
+    new_content: &str,
+    delete_ids: Vec<String>,
+) -> Result<(), crate::AppError> {
+    ensure_default_session(db)?;
+
+    db.execute(
+        "UPDATE session_messages SET content = ?1 WHERE id = ?2;",
+        params![new_content, edit_id],
+    )
+    .map_err(|err| format!("Failed updating chat message: {err}"))?;
+
+    for id in delete_ids {
+        db.execute("DELETE FROM session_messages WHERE id = ?1;", params![id])
+            .map_err(|err| format!("Failed deleting subsequent chat message {id}: {err}"))?;
+    }
+
+    Ok(())
+}

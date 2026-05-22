@@ -317,7 +317,7 @@ function App() {
   };
 
   const rightToggleStyle = {
-    right: rightPaneExpanded ? `${rightPaneWidth + 16}px` : "16px",
+    right: rightPaneExpanded ? `${rightPaneWidth + 48}px` : "48px",
     zIndex: 1005,
   };
 

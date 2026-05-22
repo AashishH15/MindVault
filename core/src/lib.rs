@@ -917,6 +917,26 @@ fn chat_clear_history(state: tauri::State<'_, AppState>) -> IpcResponse<()> {
 }
 
 #[tauri::command]
+fn chat_edit_and_truncate(
+    state: tauri::State<'_, AppState>,
+    edit_id: String,
+    new_content: String,
+    delete_ids: Vec<String>,
+) -> IpcResponse<()> {
+    into_ipc((|| {
+        let mut conn = open_connection(&state.db_path)?;
+        let tx = conn
+            .transaction()
+            .map_err(|err| format!("Failed starting chat_edit_and_truncate transaction: {err}"))?;
+        chat::edit_and_truncate(&tx, &edit_id, &new_content, delete_ids)?;
+        tx.commit().map_err(|err| {
+            format!("Failed committing chat_edit_and_truncate transaction: {err}")
+        })?;
+        Ok(())
+    })())
+}
+
+#[tauri::command]
 fn vault_create(input: VaultCreateInput, state: tauri::State<'_, DbState>) -> IpcResponse<Vault> {
     into_ipc((|| {
         let mut conn = open_connection(&state.db_path)?;
@@ -2510,6 +2530,7 @@ pub fn run() {
             chat_get_history,
             chat_append_message,
             chat_clear_history,
+            chat_edit_and_truncate,
             vault_create,
             vault_list,
             vault_delete,

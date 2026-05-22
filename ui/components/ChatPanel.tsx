@@ -22,6 +22,7 @@ import {
   chatAppendMessage,
   clearChatHistory,
   getChatHistory,
+  chatEditAndTruncate,
   type ChatMessage,
 } from "../services/chat";
 import { chatWithScope } from "../services/nodes";
@@ -175,6 +176,8 @@ function ChatPanel({
   const [isClearing, setIsClearing] = useState(false);
   const [status, setStatus] = useState("");
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [editingContent, setEditingContent] = useState("");
 
   const [userName, setUserName] = useState("Lisa");
   const [vaults, setVaults] = useState<Vault[]>([]);
@@ -190,6 +193,7 @@ function ChatPanel({
 
   const threadEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const editInputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     if (inputRef.current) {
@@ -197,6 +201,13 @@ function ChatPanel({
       inputRef.current.style.height = `${Math.min(inputRef.current.scrollHeight, 250)}px`;
     }
   }, [input]);
+
+  useEffect(() => {
+    if (editInputRef.current) {
+      editInputRef.current.style.height = "auto";
+      editInputRef.current.style.height = `${editInputRef.current.scrollHeight}px`;
+    }
+  }, [editingContent, editingMessageId]);
 
   useEffect(() => {
     threadEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -323,25 +334,11 @@ function ChatPanel({
   }, [messages]);
   const hiddenMessageCount = Math.max(0, messages.length - visibleMessages.length);
 
-  async function executeSendMessage(promptText: string) {
-    if (isSending || isClearing || !promptText.trim()) return;
-
+  async function executeLlmResponse(promptText: string) {
     setStatus("");
     setIsSending(true);
 
-    const userMsgId = crypto.randomUUID();
-    const userMsg: ChatMessage = {
-      id: userMsgId,
-      role: "user",
-      content: promptText,
-      created_at: new Date().toISOString(),
-    };
-
-    setMessages((prev) => [...prev, userMsg]);
-
     try {
-      const persistUserMessage = chatAppendMessage(userMsgId, "user", promptText);
-
       const provider = getLlmProvider();
       let endpoint = "";
       if (provider === "lmstudio") {
@@ -368,7 +365,6 @@ function ChatPanel({
         model,
         executionPrompt
       );
-      await persistUserMessage;
 
       const aiMsgId = crypto.randomUUID();
       const aiMsg: ChatMessage = {
@@ -384,6 +380,27 @@ function ChatPanel({
       setStatus(String(error));
     } finally {
       setIsSending(false);
+    }
+  }
+
+  async function executeSendMessage(promptText: string) {
+    if (isSending || isClearing || !promptText.trim()) return;
+
+    const userMsgId = crypto.randomUUID();
+    const userMsg: ChatMessage = {
+      id: userMsgId,
+      role: "user",
+      content: promptText,
+      created_at: new Date().toISOString(),
+    };
+
+    setMessages((prev) => [...prev, userMsg]);
+
+    try {
+      await chatAppendMessage(userMsgId, "user", promptText);
+      await executeLlmResponse(promptText);
+    } catch (error) {
+      setStatus(String(error));
     }
   }
 
@@ -450,17 +467,72 @@ function ChatPanel({
     }
   }
 
+  function handleStartEdit(messageId: string, content: string) {
+    setEditingMessageId(messageId);
+    setEditingContent(content);
+  }
+
+  function handleCancelEdit() {
+    setEditingMessageId(null);
+    setEditingContent("");
+  }
+
+  async function handleSaveEdit(index: number, newContent: string) {
+    if (isSending || isClearing || !newContent.trim()) return;
+
+    const userMsg = messages[index];
+    if (userMsg.content === newContent) {
+      setEditingMessageId(null);
+      return;
+    }
+
+    const deleteIds = messages.slice(index + 1).map((m) => m.id);
+
+    try {
+      await chatEditAndTruncate(userMsg.id, newContent, deleteIds);
+      setMessages((prev) => {
+        const updated = [...prev.slice(0, index)];
+        updated.push({
+          ...userMsg,
+          content: newContent,
+        });
+        return updated;
+      });
+      setEditingMessageId(null);
+      await executeLlmResponse(newContent);
+    } catch (error) {
+      setStatus(String(error));
+    }
+  }
+
   async function handleRetryMessage(index: number) {
-    // Find the last user message before this assistant message
-    let targetPrompt = "";
-    for (let i = index - 1; i >= 0; i--) {
-      if (messages[i].role === "user") {
-        targetPrompt = messages[i].content;
-        break;
+    if (isSending || isClearing) return;
+
+    // Find the user message index
+    let userIndex = -1;
+    if (messages[index].role === "user") {
+      userIndex = index;
+    } else {
+      // Find the last user message before this assistant message
+      for (let i = index - 1; i >= 0; i--) {
+        if (messages[i].role === "user") {
+          userIndex = i;
+          break;
+        }
       }
     }
-    if (targetPrompt) {
-      await executeSendMessage(targetPrompt);
+
+    if (userIndex !== -1) {
+      const userMsg = messages[userIndex];
+      const deleteIds = messages.slice(userIndex + 1).map((m) => m.id);
+
+      try {
+        await chatEditAndTruncate(userMsg.id, userMsg.content, deleteIds);
+        setMessages((prev) => prev.slice(0, userIndex + 1));
+        await executeLlmResponse(userMsg.content);
+      } catch (error) {
+        setStatus(String(error));
+      }
     }
   }
 
@@ -706,7 +778,33 @@ function ChatPanel({
               {message.role === "assistant" && <div className="chat-avatar">MV</div>}
               <div className="chat-bubble-container">
                 <div className="chat-bubble">
-                  {message.role === "assistant" ? (
+                  {editingMessageId === message.id ? (
+                    <div className="chat-bubble-edit-container">
+                      <textarea
+                        ref={editInputRef}
+                        className="chat-bubble-edit-textarea"
+                        value={editingContent}
+                        onChange={(e) => setEditingContent(e.target.value)}
+                        autoFocus
+                      />
+                      <div className="chat-bubble-edit-actions">
+                        <button
+                          type="button"
+                          className="chat-bubble-edit-btn cancel"
+                          onClick={handleCancelEdit}
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          className="chat-bubble-edit-btn save"
+                          onClick={() => void handleSaveEdit(index, editingContent)}
+                        >
+                          Save
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
                     <ReactMarkdown
                       remarkPlugins={[remarkGfm]}
                       components={{
@@ -746,8 +844,6 @@ function ChatPanel({
                     >
                       {message.content}
                     </ReactMarkdown>
-                  ) : (
-                    message.content
                   )}
                   {message.isStreaming && <span className="streaming-cursor" />}
                 </div>
@@ -787,6 +883,50 @@ function ChatPanel({
                           <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
                         </svg>
                       )}
+                    </button>
+                    <button
+                      type="button"
+                      className="chat-action-btn"
+                      onClick={() => handleRetryMessage(index)}
+                      title="Retry response"
+                    >
+                      <svg
+                        width="15"
+                        height="15"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <polyline points="23 4 23 10 17 10"></polyline>
+                        <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+                      </svg>
+                    </button>
+                  </div>
+                )}
+                {message.role === "user" && editingMessageId !== message.id && (
+                  <div className="chat-bubble-actions">
+                    <button
+                      type="button"
+                      className="chat-action-btn"
+                      onClick={() => handleStartEdit(message.id, message.content)}
+                      title="Edit message"
+                    >
+                      <svg
+                        width="15"
+                        height="15"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <path d="M12 20h9"></path>
+                        <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
+                      </svg>
                     </button>
                     <button
                       type="button"

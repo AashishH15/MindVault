@@ -1,7 +1,9 @@
+pub mod changeset;
 pub mod parser;
 pub mod prompt;
 pub mod similarity;
 
+pub use changeset::{build_changeset, ChangesetItemType, PendingChangeset, PendingChangesetItem};
 pub use parser::{
     parse_candidates_from_llm_output, parse_candidates_json, CandidateAction, CandidateNode,
 };

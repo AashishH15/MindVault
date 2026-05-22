@@ -86,6 +86,10 @@ export function chatClearHistory() {
   return invokeTyped<void>("chat_clear_history");
 }
 
+export function chatEditAndTruncate(editId: string, newContent: string, deleteIds: string[]) {
+  return invokeTyped<void>("chat_edit_and_truncate", { editId, newContent, deleteIds });
+}
+
 export function vaultCreate(input: VaultCreateInput) {
   return invokeTyped<Vault>("vault_create", { input });
 }
