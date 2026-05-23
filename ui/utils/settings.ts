@@ -111,6 +111,8 @@ export function setApiKey(provider: string, key: string): void {
 }
 
 const CHARTS_ENABLED_KEY = "mindvault.llm.charts.enabled";
+const CHAT_CHARTS_ENABLED_KEY = "mindvault.llm.charts.chat.enabled";
+const NODE_EDITOR_CHARTS_ENABLED_KEY = "mindvault.llm.charts.nodeeditor.enabled";
 
 export function getChartsEnabled(): boolean {
   const value = window.localStorage.getItem(CHARTS_ENABLED_KEY);
@@ -119,6 +121,26 @@ export function getChartsEnabled(): boolean {
 
 export function setChartsEnabled(enabled: boolean): void {
   window.localStorage.setItem(CHARTS_ENABLED_KEY, enabled ? "true" : "false");
+  window.dispatchEvent(new CustomEvent("mindvault:llm-settings-changed"));
+}
+
+export function getChatChartsEnabled(): boolean {
+  const value = window.localStorage.getItem(CHAT_CHARTS_ENABLED_KEY);
+  return value === "true";
+}
+
+export function setChatChartsEnabled(enabled: boolean): void {
+  window.localStorage.setItem(CHAT_CHARTS_ENABLED_KEY, enabled ? "true" : "false");
+  window.dispatchEvent(new CustomEvent("mindvault:llm-settings-changed"));
+}
+
+export function getNodeEditorChartsEnabled(): boolean {
+  const value = window.localStorage.getItem(NODE_EDITOR_CHARTS_ENABLED_KEY);
+  return value === "true";
+}
+
+export function setNodeEditorChartsEnabled(enabled: boolean): void {
+  window.localStorage.setItem(NODE_EDITOR_CHARTS_ENABLED_KEY, enabled ? "true" : "false");
   window.dispatchEvent(new CustomEvent("mindvault:llm-settings-changed"));
 }
 

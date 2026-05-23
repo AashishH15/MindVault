@@ -73,3 +73,14 @@ export async function chatWithScope(
     chatWithLlm(nodeIds, scope, provider, endpoint, model, userPrompt, chartsEnabled)
   );
 }
+
+export async function searchNodes(query: string): Promise<Node[]> {
+  const nodes = await getAllNodes();
+  if (!query) return nodes;
+  const lowerQuery = query.toLowerCase();
+  return nodes.filter(
+    (node) =>
+      node.title.toLowerCase().includes(lowerQuery) ||
+      (node.summary && node.summary.toLowerCase().includes(lowerQuery))
+  );
+}

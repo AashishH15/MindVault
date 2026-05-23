@@ -265,3 +265,7 @@ export function onboardingExtractProposals(
 export function onboardingCommit(proposals: OnboardingNodeCommitInput[]) {
   return invokeTyped<boolean>("onboarding_commit", { proposals });
 }
+
+export function saveMarkdownFile(defaultName: string, content: string) {
+  return invokeTyped<boolean>("save_markdown_file", { defaultName, content });
+}

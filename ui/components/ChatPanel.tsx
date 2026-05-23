@@ -7,29 +7,13 @@ import React, {
   type KeyboardEvent,
 } from "react";
 import ReactMarkdown from "react-markdown";
-import remarkMath from "remark-math";
-import rehypeKatex from "rehype-katex";
-import remarkGfm from "remark-gfm";
-import ChartBlock from "./ChartBlock";
-import MermaidBlock from "./MermaidBlock";
-import PlantUmlBlock from "./PlantUmlBlock";
-import LatexBlock from "./LatexBlock";
-import "katex/dist/katex.min.css";
 import {
-  TbBrandPython,
-  TbBrandJavascript,
-  TbBrandTypescript,
-  TbBrandRust,
-  TbBrandHtml5,
-  TbBrandCss3,
-  TbDatabase,
-  TbTerminal2,
-  TbBraces,
-  TbMarkdown,
-  TbBrandGolang,
-  TbBrandCpp,
-  TbCode,
-} from "react-icons/tb";
+  remarkPluginsStable,
+  rehypePluginsStable,
+  createMarkdownComponents,
+  preprocessMathDelimiters,
+  preprocessWikiLinks,
+} from "../utils/markdownUtils";
 import type { ContextAssemblerScope } from "../constants/contextBudget";
 import type { Vault } from "../ipc";
 import {
@@ -50,198 +34,8 @@ import {
   getLlmMode,
   setLlmMode,
   getApiKey,
-  getChartsEnabled,
-  setChartsEnabled,
 } from "../utils/settings";
-
-type CodeBlockProps = {
-  language: string;
-  code: string;
-};
-
-function getLanguageIcon(language: string): React.ReactNode {
-  const lang = language.toLowerCase().trim();
-  if (!lang) return null;
-
-  const size = 15;
-
-  switch (lang) {
-    case "python":
-    case "py":
-      return <TbBrandPython size={size} />;
-    case "javascript":
-    case "js":
-      return <TbBrandJavascript size={size} />;
-    case "typescript":
-    case "ts":
-      return <TbBrandTypescript size={size} />;
-    case "rust":
-    case "rs":
-      return <TbBrandRust size={size} />;
-    case "bash":
-    case "sh":
-    case "shell":
-    case "zsh":
-      return <TbTerminal2 size={size} />;
-    case "json":
-      return <TbBraces size={size} />;
-    case "html":
-      return <TbBrandHtml5 size={size} />;
-    case "css":
-      return <TbBrandCss3 size={size} />;
-    case "sql":
-      return <TbDatabase size={size} />;
-    case "markdown":
-    case "md":
-      return <TbMarkdown size={size} />;
-    case "go":
-    case "golang":
-      return <TbBrandGolang size={size} />;
-    case "cpp":
-    case "c++":
-    case "c":
-      return <TbBrandCpp size={size} />;
-    default:
-      return <TbCode size={size} />;
-  }
-}
-
-function CodeBlock({ language, code }: CodeBlockProps) {
-  const [copied, setCopied] = useState(false);
-
-  const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(code);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch (err) {
-      console.error("Failed to copy code block:", err);
-    }
-  };
-
-  return (
-    <div className="code-block-wrapper">
-      <div className="code-block-header">
-        <div className="code-block-lang-container">
-          {getLanguageIcon(language)}
-          <span className="code-block-lang">{language}</span>
-        </div>
-        <button
-          type="button"
-          className="code-block-copy-btn"
-          onClick={handleCopy}
-          aria-label={copied ? "Copied to clipboard" : "Copy code"}
-          title={copied ? "Copied!" : "Copy"}
-        >
-          {copied ? (
-            <svg
-              width="13"
-              height="13"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <polyline points="20 6 9 17 4 12"></polyline>
-            </svg>
-          ) : (
-            <svg
-              width="13"
-              height="13"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-            </svg>
-          )}
-        </button>
-      </div>
-      <pre>
-        <code>{code}</code>
-      </pre>
-    </div>
-  );
-}
-
-// Stable module-level ReactMarkdown components override factory — avoids creating new
-// function references on every render cycle unless chartsEnabled actually changes,
-// which preserves the keystroke performance fix while enabling toggleability.
-function createMarkdownComponents(chartsEnabled: boolean) {
-  return {
-    pre({
-      children,
-      ...props
-    }: React.ClassAttributes<HTMLPreElement> &
-      React.HTMLAttributes<HTMLPreElement> & { node?: unknown }) {
-      const childrenArray = React.Children.toArray(children);
-      const codeChild = childrenArray.find(
-        (
-          child
-        ): child is React.ReactElement<{
-          className?: string;
-          children?: React.ReactNode;
-        }> => React.isValidElement(child) && child.type === "code"
-      );
-
-      if (codeChild) {
-        const codeProps = codeChild.props;
-        const className = codeProps.className || "";
-        const match = /language-([\w-]+)/.exec(className);
-        const language = match ? match[1] : "";
-
-        const codeContent = codeProps.children;
-        const codeString =
-          typeof codeContent === "string"
-            ? codeContent
-            : Array.isArray(codeContent)
-              ? codeContent.join("")
-              : String(codeContent || "");
-
-        const isChart =
-          chartsEnabled &&
-          (language === "chart" || language === "plotly" || language.startsWith("chart-"));
-
-        if (isChart) {
-          return <ChartBlock language={language} code={codeString.replace(/\n$/, "")} />;
-        }
-
-        if (language === "mermaid") {
-          return chartsEnabled ? (
-            <MermaidBlock code={codeString.replace(/\n$/, "")} />
-          ) : (
-            <CodeBlock language={language} code={codeString.replace(/\n$/, "")} />
-          );
-        }
-
-        if (language === "plantuml" || language === "puml") {
-          return chartsEnabled ? (
-            <PlantUmlBlock code={codeString.replace(/\n$/, "")} />
-          ) : (
-            <CodeBlock language={language} code={codeString.replace(/\n$/, "")} />
-          );
-        }
-
-        if (language === "latex" || language === "tex") {
-          return <LatexBlock code={codeString.replace(/\n$/, "")} />;
-        }
-
-        return <CodeBlock language={language} code={codeString.replace(/\n$/, "")} />;
-      }
-
-      return <pre {...props}>{children}</pre>;
-    },
-  };
-}
-
-const remarkPluginsStable = [remarkGfm, remarkMath];
-const rehypePluginsStable = [rehypeKatex];
+import { useUIStore } from "../utils/store";
 
 // Memoized individual message bubble — prevents re-rendering existing messages
 // when unrelated parent state (e.g. input text) changes. Each bubble only
@@ -260,6 +54,7 @@ type ChatMessageBubbleProps = {
   onRetryMessage: (index: number) => void;
   onStartEdit: (messageId: string, content: string) => void;
   chartsEnabled: boolean;
+  onSelectNode?: (nodeId: string) => void;
 };
 
 const ChatMessageBubble = React.memo(function ChatMessageBubble({
@@ -276,10 +71,29 @@ const ChatMessageBubble = React.memo(function ChatMessageBubble({
   onRetryMessage,
   onStartEdit,
   chartsEnabled,
+  onSelectNode,
 }: ChatMessageBubbleProps) {
+  const bubbleContentRef = useRef<HTMLDivElement>(null);
+  const [isOverflowing, setIsOverflowing] = useState(false);
+  const [isCollapsed, setIsCollapsed] = useState(true);
+
+  useEffect(() => {
+    if (bubbleContentRef.current && message.role === "user" && !isEditing) {
+      // scrollHeight > 245 corresponds to more than 10 lines of text
+      const hasOverflow = bubbleContentRef.current.scrollHeight > 245;
+      setIsOverflowing(hasOverflow);
+      setIsCollapsed(true);
+    }
+  }, [message.content, message.role, isEditing]);
+
   const markdownComponents = React.useMemo(() => {
-    return createMarkdownComponents(chartsEnabled);
-  }, [chartsEnabled]);
+    return createMarkdownComponents(chartsEnabled, onSelectNode);
+  }, [chartsEnabled, onSelectNode]);
+
+  const preprocessedMessage = React.useMemo(() => {
+    const wLinks = preprocessWikiLinks(message.content);
+    return preprocessMathDelimiters(wLinks);
+  }, [message.content]);
 
   return (
     <article className={`chat-message chat-message-${message.role}`}>
@@ -313,13 +127,31 @@ const ChatMessageBubble = React.memo(function ChatMessageBubble({
               </div>
             </div>
           ) : (
-            <ReactMarkdown
-              remarkPlugins={remarkPluginsStable}
-              rehypePlugins={rehypePluginsStable}
-              components={markdownComponents}
-            >
-              {message.content}
-            </ReactMarkdown>
+            <>
+              <div
+                ref={bubbleContentRef}
+                className={`chat-bubble-content-wrapper ${
+                  message.role === "user" && isOverflowing && isCollapsed ? "collapsed" : ""
+                }`}
+              >
+                <ReactMarkdown
+                  remarkPlugins={remarkPluginsStable}
+                  rehypePlugins={rehypePluginsStable}
+                  components={markdownComponents}
+                >
+                  {preprocessedMessage}
+                </ReactMarkdown>
+              </div>
+              {message.role === "user" && isOverflowing && (
+                <button
+                  type="button"
+                  className="chat-show-more-btn"
+                  onClick={() => setIsCollapsed(!isCollapsed)}
+                >
+                  {isCollapsed ? "Show more" : "Show less"}
+                </button>
+              )}
+            </>
           )}
           {message.isStreaming && <span className="streaming-cursor" />}
         </div>
@@ -387,6 +219,41 @@ const ChatMessageBubble = React.memo(function ChatMessageBubble({
             <button
               type="button"
               className="chat-action-btn"
+              onClick={() => onCopyMessage(message.content, message.id)}
+              title="Copy message"
+            >
+              {isCopied ? (
+                <svg
+                  width="15"
+                  height="15"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+              ) : (
+                <svg
+                  width="15"
+                  height="15"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                </svg>
+              )}
+            </button>
+            <button
+              type="button"
+              className="chat-action-btn"
               onClick={() => onStartEdit(message.id, message.content)}
               title="Edit message"
             >
@@ -438,6 +305,7 @@ type ChatPanelProps = {
   onSelectVault: (vaultId: string | null) => void;
   onOpenSettings?: () => void;
   onModalToggle?: (isOpen: boolean) => void;
+  onSelectNode?: (nodeId: string) => void;
 };
 
 function ChatPanel({
@@ -447,8 +315,9 @@ function ChatPanel({
   onSelectVault,
   onOpenSettings,
   onModalToggle,
+  onSelectNode,
 }: ChatPanelProps) {
-  const MAX_RENDERED_MESSAGES = 120;
+  const MAX_RENDERED_MESSAGES = 60;
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [isSending, setIsSending] = useState(false);
@@ -466,7 +335,8 @@ function ChatPanel({
   const [currentProvider, setCurrentProvider] = useState(() => getLlmProvider());
   const [currentModel, setCurrentModel] = useState(() => getLlmModel());
   const [currentMode, setCurrentMode] = useState(() => getLlmMode());
-  const [chartsEnabled, setChartsEnabledState] = useState(() => getChartsEnabled());
+  const chartsEnabled = useUIStore((state) => state.chat.chartsEnabled);
+  const setChatChartsEnabled = useUIStore((state) => state.setChatChartsEnabled);
   const [showChartsConfirmModal, setShowChartsConfirmModal] = useState(false);
 
   useEffect(() => {
@@ -478,12 +348,11 @@ function ChatPanel({
 
   const handleToggleCharts = useCallback(() => {
     if (chartsEnabled) {
-      setChartsEnabled(false);
-      setChartsEnabledState(false);
+      setChatChartsEnabled(false);
     } else {
       setShowChartsConfirmModal(true);
     }
-  }, [chartsEnabled]);
+  }, [chartsEnabled, setChatChartsEnabled]);
 
   const threadEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -572,7 +441,6 @@ function ChatPanel({
       setCurrentProvider(getLlmProvider());
       setCurrentModel(getLlmModel());
       setCurrentMode(getLlmMode());
-      setChartsEnabledState(getChartsEnabled());
     }
     window.addEventListener("mindvault:llm-settings-changed", handleSettingsChange);
     return () => {
@@ -1104,8 +972,7 @@ function ChatPanel({
                   type="button"
                   className="charts-modal-btn confirm-btn"
                   onClick={() => {
-                    setChartsEnabled(true);
-                    setChartsEnabledState(true);
+                    setChatChartsEnabled(true);
                     setShowChartsConfirmModal(false);
                   }}
                 >
@@ -1145,6 +1012,7 @@ function ChatPanel({
               onRetryMessage={handleRetryMessage}
               onStartEdit={handleStartEdit}
               chartsEnabled={chartsEnabled}
+              onSelectNode={onSelectNode}
             />
           ))}
           {isSending && (
@@ -1451,8 +1319,7 @@ function ChatPanel({
                 type="button"
                 className="charts-modal-btn confirm-btn"
                 onClick={() => {
-                  setChartsEnabled(true);
-                  setChartsEnabledState(true);
+                  setChatChartsEnabled(true);
                   setShowChartsConfirmModal(false);
                 }}
               >

@@ -1,0 +1,350 @@
+/* eslint-disable react-refresh/only-export-components */
+import React, { useState } from "react";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+import remarkGfm from "remark-gfm";
+import ChartBlock from "../components/ChartBlock";
+import MermaidBlock from "../components/MermaidBlock";
+import PlantUmlBlock from "../components/PlantUmlBlock";
+import LatexBlock from "../components/LatexBlock";
+import "katex/dist/katex.min.css";
+import {
+  TbBrandPython,
+  TbBrandJavascript,
+  TbBrandTypescript,
+  TbBrandRust,
+  TbBrandHtml5,
+  TbBrandCss3,
+  TbDatabase,
+  TbTerminal2,
+  TbBraces,
+  TbMarkdown,
+  TbBrandGolang,
+  TbBrandCpp,
+  TbCode,
+} from "react-icons/tb";
+
+export type CodeBlockProps = {
+  language: string;
+  code: string;
+};
+
+export const remarkPluginsStable = [remarkGfm, remarkMath];
+export const rehypePluginsStable = [rehypeKatex];
+
+export function getLanguageIcon(language: string): React.ReactNode {
+  const lang = language.toLowerCase().trim();
+  if (!lang) return null;
+
+  const size = 15;
+
+  switch (lang) {
+    case "python":
+    case "py":
+      return <TbBrandPython size={size} />;
+    case "javascript":
+    case "js":
+      return <TbBrandJavascript size={size} />;
+    case "typescript":
+    case "ts":
+      return <TbBrandTypescript size={size} />;
+    case "rust":
+    case "rs":
+      return <TbBrandRust size={size} />;
+    case "bash":
+    case "sh":
+    case "shell":
+    case "zsh":
+      return <TbTerminal2 size={size} />;
+    case "json":
+      return <TbBraces size={size} />;
+    case "html":
+      return <TbBrandHtml5 size={size} />;
+    case "css":
+      return <TbBrandCss3 size={size} />;
+    case "sql":
+      return <TbDatabase size={size} />;
+    case "markdown":
+    case "md":
+      return <TbMarkdown size={size} />;
+    case "go":
+    case "golang":
+      return <TbBrandGolang size={size} />;
+    case "cpp":
+    case "c++":
+    case "c":
+      return <TbBrandCpp size={size} />;
+    default:
+      return <TbCode size={size} />;
+  }
+}
+
+export function CodeBlock({ language, code }: CodeBlockProps) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error("Failed to copy code block:", err);
+    }
+  };
+
+  return (
+    <div className="code-block-wrapper">
+      <div className="code-block-header">
+        <div className="code-block-lang-container">
+          {getLanguageIcon(language)}
+          <span className="code-block-lang">{language}</span>
+        </div>
+        <button
+          type="button"
+          className="code-block-copy-btn"
+          onClick={handleCopy}
+          aria-label={copied ? "Copied to clipboard" : "Copy code"}
+          title={copied ? "Copied!" : "Copy"}
+        >
+          {copied ? (
+            <svg
+              width="13"
+              height="13"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <polyline points="20 6 9 17 4 12"></polyline>
+            </svg>
+          ) : (
+            <svg
+              width="13"
+              height="13"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+            </svg>
+          )}
+        </button>
+      </div>
+      <pre>
+        <code>{code}</code>
+      </pre>
+    </div>
+  );
+}
+
+/** Preprocesses [[Node Title|node_id]] into [Node Title](#node/node_id) markdown link format */
+export function preprocessWikiLinks(text: string): string {
+  if (!text) return "";
+  return text.replace(/\[\[([^|\]\n]+)\|([^\]\n]+)\]\]/g, "[$1](#node/$2)");
+}
+
+/** Detects if the given text has raw LaTeX document structure (checking for \documentclass or \begin{document}) */
+export function isRawLatex(text: string): boolean {
+  if (!text) return false;
+  const trimmed = text.trim();
+  return trimmed.includes("\\documentclass") || trimmed.includes("\\begin{document}");
+}
+
+/** Normalizes LaTeX math delimiters like \[ ... \] and \( ... \) into standard $$ and $ formats for ReactMarkdown */
+export function preprocessMathDelimiters(text: string): string {
+  if (!text) return "";
+  let processed = text;
+  // Replace \\[ or \[ with $$
+  processed = processed.replace(/\\\\\[/g, "$$\n").replace(/\\\[/g, "$$\n");
+  processed = processed.replace(/\\\\\]/g, "\n$$").replace(/\\\]/g, "\n$$");
+  // Replace \\( or \( with $
+  processed = processed.replace(/\\\\\(/g, "$").replace(/\\\(/g, "$");
+  processed = processed.replace(/\\\\\)/g, "$").replace(/\\\)/g, "$");
+  return processed;
+}
+
+/**
+ * Creates stable markdown components overrides
+ */
+export function createMarkdownComponents(
+  chartsEnabled: boolean,
+  onSelectNode?: (nodeId: string) => void
+) {
+  return {
+    a({ href, children, ...props }: React.AnchorHTMLAttributes<HTMLAnchorElement>) {
+      const isNodeLink = href && (href.includes("#node/") || href.includes("mindvault://node/"));
+      if (isNodeLink) {
+        const nodeId =
+          href
+            .split(/#node\/|mindvault:\/\/node\//)
+            .pop()
+            ?.split(/[?#]/)[0] || "";
+        return (
+          <button
+            type="button"
+            className="wikilink-badge"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              if (onSelectNode) {
+                onSelectNode(nodeId);
+              }
+            }}
+            title={`Navigate to: ${children}`}
+          >
+            <span className="wikilink-badge-icon">↗</span> {children}
+          </button>
+        );
+      }
+      return (
+        <a href={href} {...props}>
+          {children}
+        </a>
+      );
+    },
+    pre({
+      children,
+      ...props
+    }: React.ClassAttributes<HTMLPreElement> &
+      React.HTMLAttributes<HTMLPreElement> & { node?: unknown }) {
+      const childrenArray = React.Children.toArray(children);
+      const codeChild = childrenArray.find(
+        (
+          child
+        ): child is React.ReactElement<{
+          className?: string;
+          children?: React.ReactNode;
+        }> => React.isValidElement(child) && child.type === "code"
+      );
+
+      if (codeChild) {
+        const codeProps = codeChild.props;
+        const className = codeProps.className || "";
+        const match = /language-([\w-]+)/.exec(className);
+        const language = match ? match[1] : "";
+
+        const codeContent = codeProps.children;
+        const codeString =
+          typeof codeContent === "string"
+            ? codeContent
+            : Array.isArray(codeContent)
+              ? codeContent.join("")
+              : String(codeContent || "");
+
+        const isChart =
+          chartsEnabled &&
+          (language === "chart" || language === "plotly" || language.startsWith("chart-"));
+
+        if (isChart) {
+          return <ChartBlock language={language} code={codeString.replace(/\n$/, "")} />;
+        }
+
+        if (language === "mermaid") {
+          return chartsEnabled ? (
+            <MermaidBlock code={codeString.replace(/\n$/, "")} />
+          ) : (
+            <CodeBlock language={language} code={codeString.replace(/\n$/, "")} />
+          );
+        }
+
+        if (language === "plantuml" || language === "puml") {
+          return chartsEnabled ? (
+            <PlantUmlBlock code={codeString.replace(/\n$/, "")} />
+          ) : (
+            <CodeBlock language={language} code={codeString.replace(/\n$/, "")} />
+          );
+        }
+
+        if (language === "latex" || language === "tex") {
+          return chartsEnabled ? (
+            <LatexBlock code={codeString.replace(/\n$/, "")} />
+          ) : (
+            <CodeBlock language={language} code={codeString.replace(/\n$/, "")} />
+          );
+        }
+
+        return <CodeBlock language={language} code={codeString.replace(/\n$/, "")} />;
+      }
+
+      return <pre {...props}>{children}</pre>;
+    },
+  };
+}
+
+/**
+ * Calculates the exact top and left caret coordinates relative to the top-left corner of the textarea's padding box.
+ */
+export function getCaretCoordinates(
+  element: HTMLTextAreaElement,
+  position: number
+): { top: number; left: number } {
+  const div = document.createElement("div");
+  document.body.appendChild(div);
+
+  const style = div.style;
+  const computed = window.getComputedStyle(element);
+
+  style.whiteSpace = "pre-wrap";
+  style.wordBreak = "break-word";
+  style.position = "absolute";
+  style.visibility = "hidden";
+
+  const properties = [
+    "direction",
+    "boxSizing",
+    "width",
+    "height",
+    "overflowX",
+    "overflowY",
+    "borderWidth",
+    "borderStyle",
+    "paddingTop",
+    "paddingRight",
+    "paddingBottom",
+    "paddingLeft",
+    "fontFamily",
+    "fontSize",
+    "fontWeight",
+    "fontStyle",
+    "fontVariant",
+    "textTransform",
+    "wordSpacing",
+    "letterSpacing",
+    "lineHeight",
+  ];
+
+  for (const prop of properties) {
+    // @ts-expect-error - dynamic key styling access
+    style[prop] = computed[prop];
+  }
+
+  style.boxSizing = "content-box";
+  const paddingLeft = parseFloat(computed.paddingLeft) || 0;
+  const paddingRight = parseFloat(computed.paddingRight) || 0;
+  style.width = `${element.clientWidth - paddingLeft - paddingRight}px`;
+
+  const textContent = element.value.substring(0, position);
+  div.textContent = textContent;
+
+  const span = document.createElement("span");
+  span.textContent = "\u200b";
+  div.appendChild(span);
+
+  const borderTop = parseFloat(computed.borderTopWidth) || 0;
+  const borderLeft = parseFloat(computed.borderLeftWidth) || 0;
+  const lineHeight = parseFloat(computed.lineHeight) || 20;
+
+  const coordinates = {
+    top: span.offsetTop + borderTop + lineHeight - element.scrollTop,
+    left: span.offsetLeft + borderLeft - element.scrollLeft,
+  };
+
+  document.body.removeChild(div);
+  return coordinates;
+}

@@ -80,4 +80,7 @@ textarea {
 .right-pane-stack .pane-right {
   flex: 1;
   min-height: 0;
+  border-top: 1px solid rgba(188, 108, 37, 0.15);
+  border-top-left-radius: 12px;
+  border-top-right-radius: 12px;
 }

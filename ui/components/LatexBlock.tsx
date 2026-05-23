@@ -13,11 +13,6 @@ interface LatexBlockProps {
   code: string;
 }
 
-// ----------------------------------------------------------------------
-// Safe official KaTeX direct DOM render component to completely avoid
-// raw HTML injection references, ensuring strict compliance
-// with preflight rules while keeping parsing type-safe and secure.
-// ----------------------------------------------------------------------
 interface KatexMathProps {
   math: string;
   displayMode?: boolean;
@@ -64,9 +59,6 @@ function stripLaTeXComments(code: string): string {
     .join("\n");
 }
 
-// ----------------------------------------------------------------------
-// Balanced-braces argument extractor for LaTeX macros like \title, \author, etc.
-// ----------------------------------------------------------------------
 function extractMacroArg(text: string, macroName: string): string | null {
   const index = text.indexOf(macroName);
   if (index === -1) return null;
@@ -96,9 +88,6 @@ function extractMacroArg(text: string, macroName: string): string | null {
   return content.trim();
 }
 
-// ----------------------------------------------------------------------
-// Extract text content inside LaTeX environments like \begin{env} ... \end{env}
-// ----------------------------------------------------------------------
 function extractEnvironment(text: string, envName: string): string | null {
   const beginStr = `\\begin{${envName}}`;
   const endStr = `\\end{${envName}}`;
@@ -112,9 +101,6 @@ function extractEnvironment(text: string, envName: string): string | null {
   return text.substring(startIdx + beginStr.length, endIdx).trim();
 }
 
-// ----------------------------------------------------------------------
-// Balanced-braces macro stripper for excluding metadata declarations from body
-// ----------------------------------------------------------------------
 function stripMacro(text: string, macroName: string): string {
   let result = text;
   while (true) {
@@ -146,9 +132,6 @@ function stripMacro(text: string, macroName: string): string {
   return result;
 }
 
-// ----------------------------------------------------------------------
-// Environment stripper for excluding abstract/keywords blocks from body
-// ----------------------------------------------------------------------
 function stripEnvironment(text: string, envName: string): string {
   const beginStr = `\\begin{${envName}}`;
   const endStr = `\\end{${envName}}`;
@@ -167,11 +150,132 @@ function stripEnvironment(text: string, envName: string): string {
   return result;
 }
 
-// ----------------------------------------------------------------------
-// Replaces backslash escaped symbols with literal ones inside plain text blocks
-// ----------------------------------------------------------------------
 function cleanEscapedChars(text: string): string {
   return text.replace(/\\([&_%$#{}]|maketitle)/g, "$1");
+}
+
+function normalizeLatexMacros(text: string): string {
+  let result = text;
+
+  // 1. Strip vspace and hspace macros completely
+  result = result.replace(/\\[vh]space\*?\{[^}]*\}/g, "");
+
+  // 2. Normalize brace groups like {\LARGE content} to \LARGE{content}
+  const sizeTags = [
+    "LARGE",
+    "Large",
+    "large",
+    "small",
+    "footnotesize",
+    "scriptsize",
+    "tiny",
+    "bfseries",
+    "itshape",
+  ];
+  for (const tag of sizeTags) {
+    let startIdx = 0;
+    while (true) {
+      const searchStr = `{\\${tag}`;
+      const idx = result.indexOf(searchStr, startIdx);
+      if (idx === -1) break;
+
+      // Find matching closing brace
+      let braceCount = 1;
+      let j = idx + searchStr.length;
+      let closeIdx = -1;
+      while (j < result.length) {
+        if (result[j] === "{") {
+          braceCount++;
+        } else if (result[j] === "}") {
+          braceCount--;
+          if (braceCount === 0) {
+            closeIdx = j;
+            break;
+          }
+        }
+        j++;
+      }
+
+      if (closeIdx !== -1) {
+        const content = result.substring(idx + searchStr.length, closeIdx);
+        result =
+          result.substring(0, idx) + `\\${tag}{` + content + "}" + result.substring(closeIdx + 1);
+      } else {
+        break;
+      }
+      startIdx = idx + 1;
+    }
+  }
+
+  // 3. Convert raw spacing and specific text macros
+  result = result
+    .replace(/\\textbar\b/g, "|")
+    .replace(/\\textbullet\b/g, "•")
+    .replace(/\\\s+/g, " ") // replace standard escaped backslash spaces '\ ' with a regular space
+    .replace(/\\&/g, "&")
+    .replace(/\\%/g, "%");
+
+  return result;
+}
+
+interface SizedSegment {
+  text: string;
+  sizeClass: string | null;
+}
+
+function segmentizeBlock(text: string): SizedSegment[] {
+  const sizeMacros = [
+    "\\LARGE{",
+    "\\Large{",
+    "\\large{",
+    "\\small{",
+    "\\footnotesize{",
+    "\\scriptsize{",
+    "\\tiny{",
+  ];
+
+  let depth = 0;
+  for (let idx = 0; idx < text.length; idx++) {
+    if (depth === 0) {
+      for (const macro of sizeMacros) {
+        if (text.startsWith(macro, idx)) {
+          const start = idx + macro.length;
+          let braceCount = 1;
+          let i = start;
+          while (i < text.length && braceCount > 0) {
+            const char = text[i];
+            if (char === "{") braceCount++;
+            else if (char === "}") braceCount--;
+            i++;
+          }
+
+          if (braceCount === 0) {
+            const before = text.substring(0, idx);
+            const innerContent = text.substring(start, i - 1);
+            const after = text.substring(i);
+
+            const sizeClass = macro.replace("\\", "").replace("{", "");
+            const segments: SizedSegment[] = [];
+
+            if (before.trim()) {
+              segments.push(...segmentizeBlock(before));
+            }
+            segments.push({ text: innerContent, sizeClass: `latex-size-${sizeClass}` });
+            if (after.trim()) {
+              segments.push(...segmentizeBlock(after));
+            }
+            return segments;
+          }
+        }
+      }
+    }
+
+    const char = text[idx];
+    if (char === "{") depth++;
+    else if (char === "}") depth--;
+  }
+
+  return [{ text, sizeClass: null }];
 }
 
 // ----------------------------------------------------------------------
@@ -179,8 +283,9 @@ function cleanEscapedChars(text: string): string {
 // ($...$) recursively into structured React elements.
 // ----------------------------------------------------------------------
 function renderInlineText(text: string): React.ReactNode[] {
+  const normalized = normalizeLatexMacros(text);
   const result: React.ReactNode[] = [];
-  let currentText = text;
+  let currentText = normalized;
   let keyCounter = 0;
 
   while (currentText.length > 0) {
@@ -188,7 +293,23 @@ function renderInlineText(text: string): React.ReactNode[] {
     const dollarIdx = currentText.indexOf("$");
 
     // 2. Find styling macros
-    const macros = ["\\textbf{", "\\textit{", "\\texttt{", "\\underline{", "\\emph{"];
+    const macros = [
+      "\\textbf{",
+      "\\textit{",
+      "\\texttt{",
+      "\\underline{",
+      "\\emph{",
+      "\\LARGE{",
+      "\\Large{",
+      "\\large{",
+      "\\small{",
+      "\\footnotesize{",
+      "\\scriptsize{",
+      "\\tiny{",
+      "\\bfseries{",
+      "\\itshape{",
+      "\\href{",
+    ];
     let nearestMacroIdx = -1;
     let nearestMacro = "";
 
@@ -229,6 +350,63 @@ function renderInlineText(text: string): React.ReactNode[] {
       }
 
       const start = nearestMacroIdx + nearestMacro.length;
+
+      // Handle double-argument href macro: \href{url}{text}
+      if (nearestMacro === "\\href{") {
+        let braceCount = 1;
+        let i = start;
+        let url = "";
+        while (i < currentText.length && braceCount > 0) {
+          const char = currentText[i];
+          if (char === "{") braceCount++;
+          else if (char === "}") braceCount--;
+          if (braceCount > 0) url += char;
+          i++;
+        }
+
+        if (braceCount === 0) {
+          // Find the second braced argument: {text}
+          let textStart = i;
+          while (textStart < currentText.length && /\s/.test(currentText[textStart])) {
+            textStart++;
+          }
+
+          if (textStart < currentText.length && currentText[textStart] === "{") {
+            let textBraceCount = 1;
+            let j = textStart + 1;
+            let linkText = "";
+            while (j < currentText.length && textBraceCount > 0) {
+              const char = currentText[j];
+              if (char === "{") textBraceCount++;
+              else if (char === "}") textBraceCount--;
+              if (textBraceCount > 0) linkText += char;
+              j++;
+            }
+
+            if (textBraceCount === 0) {
+              result.push(
+                <a
+                  key={`href-${keyCounter++}`}
+                  href={url.trim()}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="latex-link"
+                >
+                  {renderInlineText(linkText)}
+                </a>
+              );
+              currentText = currentText.substring(j);
+              continue;
+            }
+          }
+        }
+
+        // Fallback if href parsing fails
+        result.push(cleanEscapedChars(currentText.substring(nearestMacroIdx)));
+        break;
+      }
+
+      // Standard single-argument balanced-braces macros
       let braceCount = 1;
       let i = start;
       let content = "";
@@ -241,25 +419,46 @@ function renderInlineText(text: string): React.ReactNode[] {
       }
 
       if (braceCount === 0) {
-        const tag =
-          nearestMacro === "\\textbf{"
-            ? "strong"
-            : nearestMacro === "\\textit{" || nearestMacro === "\\emph{"
-              ? "em"
-              : nearestMacro === "\\texttt{"
-                ? "code"
-                : "u";
-
-        const innerNodes = renderInlineText(content);
-
-        if (tag === "strong") {
-          result.push(<strong key={`style-${keyCounter++}`}>{innerNodes}</strong>);
-        } else if (tag === "em") {
-          result.push(<em key={`style-${keyCounter++}`}>{innerNodes}</em>);
-        } else if (tag === "code") {
-          result.push(<code key={`style-${keyCounter++}`}>{innerNodes}</code>);
+        if (
+          nearestMacro === "\\LARGE{" ||
+          nearestMacro === "\\Large{" ||
+          nearestMacro === "\\large{" ||
+          nearestMacro === "\\small{" ||
+          nearestMacro === "\\footnotesize{" ||
+          nearestMacro === "\\scriptsize{" ||
+          nearestMacro === "\\tiny{"
+        ) {
+          const sizeClass = nearestMacro.replace("\\", "").replace("{", "");
+          result.push(
+            <span key={`size-${keyCounter++}`} className={`latex-size-${sizeClass}`}>
+              {renderInlineText(content)}
+            </span>
+          );
         } else {
-          result.push(<u key={`style-${keyCounter++}`}>{innerNodes}</u>);
+          const tag =
+            nearestMacro === "\\textbf{" || nearestMacro === "\\bfseries{"
+              ? "strong"
+              : nearestMacro === "\\textit{" ||
+                  nearestMacro === "\\itshape{" ||
+                  nearestMacro === "\\emph{"
+                ? "em"
+                : nearestMacro === "\\texttt{"
+                  ? "code"
+                  : "u";
+
+          const innerNodes = renderInlineText(content);
+
+          if (tag === "strong") {
+            result.push(<strong key={`style-${keyCounter++}`}>{innerNodes}</strong>);
+          } else if (tag === "em") {
+            result.push(<em key={`style-${keyCounter++}`}>{innerNodes}</em>);
+          } else if (tag === "code") {
+            result.push(<code key={`style-${keyCounter++}`}>{innerNodes}</code>);
+          } else if (tag === "u") {
+            result.push(<u key={`style-${keyCounter++}`}>{innerNodes}</u>);
+          } else {
+            result.push(<span key={`style-${keyCounter++}`}>{innerNodes}</span>);
+          }
         }
 
         currentText = currentText.substring(i);
@@ -273,9 +472,6 @@ function renderInlineText(text: string): React.ReactNode[] {
   return result;
 }
 
-// ----------------------------------------------------------------------
-// High-fidelity structured parsing for block-level elements
-// ----------------------------------------------------------------------
 function parseLaTeXBody(bodyText: string): React.ReactNode[] {
   const result: React.ReactNode[] = [];
   const lines = bodyText.split("\n");
@@ -290,6 +486,8 @@ function parseLaTeXBody(bodyText: string): React.ReactNode[] {
     | "table"
     | "figure"
     | "verbatim"
+    | "center"
+    | "multicols"
     | null = null;
 
   let blockLines: string[] = [];
@@ -505,11 +703,181 @@ function parseLaTeXBody(bodyText: string): React.ReactNode[] {
         );
         break;
       }
+      case "center": {
+        const centerContent = rawContent
+          .replace(/\\begin\{center\}/g, "")
+          .replace(/\\end\{center\}/g, "")
+          .trim();
+
+        const segments = segmentizeBlock(centerContent);
+        const centerNodes: React.ReactNode[] = [];
+
+        segments.forEach((seg, segIdx) => {
+          const subLines = seg.text.split(/\\\\|\\newline/).map((l) => l.trim());
+          const segNodes: React.ReactNode[] = [];
+
+          subLines.forEach((subLine, subIdx) => {
+            if (subIdx > 0) {
+              segNodes.push(<br key={`br-${key}-${segIdx}-${subIdx}`} />);
+            }
+            segNodes.push(
+              <span key={`line-${key}-${segIdx}-${subIdx}`}>{renderInlineText(subLine)}</span>
+            );
+          });
+
+          if (seg.sizeClass) {
+            centerNodes.push(
+              <span key={`seg-${key}-${segIdx}`} className={seg.sizeClass}>
+                {segNodes}
+              </span>
+            );
+          } else {
+            centerNodes.push(...segNodes);
+          }
+        });
+
+        result.push(
+          <div
+            key={key}
+            className="latex-center-block"
+            style={{
+              textAlign: "center",
+              margin: "15px 0",
+              width: "100%",
+            }}
+          >
+            {centerNodes}
+          </div>
+        );
+        break;
+      }
+      case "multicols": {
+        const colMatch = /\\begin\{multicols\*?\}\{(\d+)\}/.exec(rawContent);
+        const colCount = colMatch ? parseInt(colMatch[1]) : 2;
+
+        const innerContent = rawContent
+          .replace(/\\begin\{multicols\*?\}\{\d+\}/g, "")
+          .replace(/\\end\{multicols\*?\}/g, "")
+          .trim();
+
+        const segments = segmentizeBlock(innerContent);
+        const colNodes: React.ReactNode[] = [];
+
+        segments.forEach((seg, segIdx) => {
+          const subLines = seg.text.split(/\\\\|\\newline/).map((l) => l.trim());
+          const segNodes: React.ReactNode[] = [];
+
+          subLines.forEach((subLine, subIdx) => {
+            if (subIdx > 0) {
+              segNodes.push(<br key={`br-${key}-${segIdx}-${subIdx}`} />);
+            }
+
+            if (subLine.includes("\\hfill")) {
+              const parts = subLine.split("\\hfill").map((p) => p.trim());
+              segNodes.push(
+                <div
+                  key={`hfill-${key}-${segIdx}-${subIdx}`}
+                  className="latex-hfill-line"
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    width: "100%",
+                    alignItems: "baseline",
+                    textAlign: "left",
+                  }}
+                >
+                  <span className="latex-hfill-left">{renderInlineText(parts[0])}</span>
+                  <span className="latex-hfill-right">{renderInlineText(parts[1])}</span>
+                </div>
+              );
+            } else {
+              segNodes.push(
+                <span key={`line-${key}-${segIdx}-${subIdx}`}>{renderInlineText(subLine)}</span>
+              );
+            }
+          });
+
+          if (seg.sizeClass) {
+            colNodes.push(
+              <span key={`seg-${key}-${segIdx}`} className={seg.sizeClass}>
+                {segNodes}
+              </span>
+            );
+          } else {
+            colNodes.push(...segNodes);
+          }
+        });
+
+        result.push(
+          <div
+            key={key}
+            className="latex-multicols-block"
+            style={{
+              columnCount: colCount,
+              columnGap: "30px",
+              textAlign: "justify",
+              margin: "15px 0",
+              width: "100%",
+            }}
+          >
+            {colNodes}
+          </div>
+        );
+        break;
+      }
       case "paragraph":
       default: {
+        const segments = segmentizeBlock(rawContent);
+        const paragraphContent: React.ReactNode[] = [];
+
+        segments.forEach((seg, segIdx) => {
+          const subLines = seg.text.split(/\\\\|\\newline/).map((l) => l.trim());
+          const segNodes: React.ReactNode[] = [];
+
+          subLines.forEach((subLine, subIdx) => {
+            if (subIdx > 0) {
+              segNodes.push(<br key={`br-${key}-${segIdx}-${subIdx}`} />);
+            }
+
+            if (subLine.includes("\\hfill")) {
+              const parts = subLine.split("\\hfill").map((p) => p.trim());
+              segNodes.push(
+                <div
+                  key={`hfill-${key}-${segIdx}-${subIdx}`}
+                  className="latex-hfill-line"
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    width: "100%",
+                    alignItems: "baseline",
+                    textAlign: "left",
+                  }}
+                >
+                  <span className="latex-hfill-left">{renderInlineText(parts[0])}</span>
+                  <span className="latex-hfill-right">{renderInlineText(parts[1])}</span>
+                </div>
+              );
+            } else {
+              segNodes.push(
+                <span key={`line-${key}-${segIdx}-${subIdx}`}>{renderInlineText(subLine)}</span>
+              );
+            }
+          });
+
+          if (seg.sizeClass) {
+            paragraphContent.push(
+              <span key={`seg-${key}-${segIdx}`} className={seg.sizeClass}>
+                {segNodes}
+              </span>
+            );
+          } else {
+            paragraphContent.push(...segNodes);
+          }
+        });
+
         result.push(
           <p key={key} className="latex-paragraph">
-            {renderInlineText(rawContent)}
+            {paragraphContent}
           </p>
         );
         break;
@@ -587,6 +955,30 @@ function parseLaTeXBody(bodyText: string): React.ReactNode[] {
       continue;
     }
     if (trimmed.startsWith("\\end{figure}")) {
+      blockLines.push(line);
+      flushBlock();
+      continue;
+    }
+
+    if (trimmed.startsWith("\\begin{center}")) {
+      flushBlock();
+      currentBlockType = "center";
+      blockLines.push(line);
+      continue;
+    }
+    if (trimmed.startsWith("\\end{center}")) {
+      blockLines.push(line);
+      flushBlock();
+      continue;
+    }
+
+    if (trimmed.startsWith("\\begin{multicols}")) {
+      flushBlock();
+      currentBlockType = "multicols";
+      blockLines.push(line);
+      continue;
+    }
+    if (trimmed.startsWith("\\end{multicols}")) {
       blockLines.push(line);
       flushBlock();
       continue;
@@ -674,6 +1066,18 @@ export default function LatexBlock({ code }: LatexBlockProps) {
 
   // Clean the body code from metadata and abstract/keywords blocks to prevent duplicates in body view
   let bodyCode = cleanCode;
+
+  // Extract content between \begin{document} and \end{document} to fully strip the LaTeX preamble
+  const beginDocIdx = bodyCode.indexOf("\\begin{document}");
+  if (beginDocIdx !== -1) {
+    const endDocIdx = bodyCode.indexOf("\\end{document}");
+    if (endDocIdx !== -1 && endDocIdx > beginDocIdx) {
+      bodyCode = bodyCode.substring(beginDocIdx + "\\begin{document}".length, endDocIdx).trim();
+    } else {
+      bodyCode = bodyCode.substring(beginDocIdx + "\\begin{document}".length).trim();
+    }
+  }
+
   bodyCode = stripMacro(bodyCode, "\\title");
   bodyCode = stripMacro(bodyCode, "\\author");
   bodyCode = stripMacro(bodyCode, "\\date");
@@ -681,6 +1085,33 @@ export default function LatexBlock({ code }: LatexBlockProps) {
   bodyCode = stripEnvironment(bodyCode, "abstract");
   bodyCode = stripEnvironment(bodyCode, "IEEEkeywords");
   bodyCode = stripEnvironment(bodyCode, "keywords");
+
+  // Preprocess bodyCode to strip settings/macros that shouldn't render as text
+  bodyCode = bodyCode
+    // Strip preamble/settings macros completely
+    .replace(/\\geometry\{[^}]*\}/g, "")
+    .replace(/\\setlength\{[^}]*\}\{[^}]*\}/g, "")
+    .replace(/\\definecolor\{[^}]*\}\{[^}]*\}\{[^}]*\}/g, "")
+    .replace(/\\titleformat\*?\{[^}]*\}(?:\{[^}]*\}){0,4}/g, "")
+    .replace(/\\titlespacing\*?\{[^}]*\}(?:\{[^}]*\}){0,3}/g, "")
+    .replace(/\\setlist\*?\[[^\]]*\]\{[^}]*\}/g, "")
+    .replace(/\\newcommand\{[^}]*\}\[[^\]]*\]\{[\s\S]*?\n\}/g, "") // remove macro definition blocks
+    .replace(/\\newcommand\{[^}]*\}\{[\s\S]*?\}/g, "")
+
+    // Strip layout control macros from body text
+    .replace(/\\sloppy/g, "")
+    .replace(/\\hyphenpenalty=\d+/g, "")
+    .replace(/\\pagenumbering\{[^}]*\}/g, "")
+    .replace(/\\selectfont/g, "")
+    .replace(/\\fontsize\{\d+\}\{\d+\}/g, "")
+
+    // Map specific custom resume macros to standard structures for elegant high-fidelity parsing
+    .replace(/\\resumesection\*?\{/g, "\\section{");
+
+  // Ensure multicols environments are on their own line boundaries to be matched correctly by line-by-line block parsers
+  bodyCode = bodyCode
+    .replace(/\\begin\{multicols\*?\}\{\d+\}/g, (match) => `\n${match}\n`)
+    .replace(/\\end\{multicols\*?\}/g, (match) => `\n${match}\n`);
 
   // Renders the structured paper body
   const docBody = parseLaTeXBody(bodyCode);
@@ -962,11 +1393,6 @@ export default function LatexBlock({ code }: LatexBlockProps) {
         ) : (
           <div className="latex-paper-scroll-container">
             <div className="latex-paper-view" ref={printContainerRef}>
-              {/* Journal / Tech Class Header (mock) */}
-              <div className="latex-paper-header-mock">
-                JOURNAL OF MINDFORCE SCIENTIFIC ARCHITECTURE, VOL. 15, NO. 4, MAY 2026
-              </div>
-
               {/* Title */}
               {title && <h1 className="title">{renderInlineText(title)}</h1>}
 

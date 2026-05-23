@@ -18,44 +18,47 @@ export default function PlantUmlBlock({ code }: PlantUmlBlockProps) {
   useEffect(() => {
     let active = true;
 
-    async function encodeDiagram() {
-      try {
-        setLoading(true);
-        setError(null);
+    const debounceTimer = setTimeout(() => {
+      async function encodeDiagram() {
+        try {
+          setLoading(true);
+          setError(null);
 
-        // 1. UTF-8 encode
-        const encoder = new TextEncoder();
-        const utf8 = encoder.encode(code);
+          // 1. UTF-8 encode
+          const encoder = new TextEncoder();
+          const utf8 = encoder.encode(code);
 
-        // 2. Compress using Deflate via CompressionStream
-        const stream = new Blob([utf8]).stream().pipeThrough(new CompressionStream("deflate"));
-        const response = new Response(stream);
-        const buffer = await response.arrayBuffer();
-        const zlibData = new Uint8Array(buffer);
+          // 2. Compress using Deflate via CompressionStream
+          const stream = new Blob([utf8]).stream().pipeThrough(new CompressionStream("deflate"));
+          const response = new Response(stream);
+          const buffer = await response.arrayBuffer();
+          const zlibData = new Uint8Array(buffer);
 
-        // 3. Strip 2-byte zlib header and 4-byte Adler-32 checksum to get raw deflate
-        const rawDeflate = zlibData.subarray(2, zlibData.length - 4);
+          // 3. Strip 2-byte zlib header and 4-byte Adler-32 checksum to get raw deflate
+          const rawDeflate = zlibData.subarray(2, zlibData.length - 4);
 
-        // 4. Custom PlantUML Base64 encode
-        const encodedStr = encode64(rawDeflate);
+          // 4. Custom PlantUML Base64 encode
+          const encodedStr = encode64(rawDeflate);
 
-        if (active) {
-          setEncoded(encodedStr);
-          setLoading(false);
-        }
-      } catch (err) {
-        console.error("PlantUML Compression Error:", err);
-        if (active) {
-          setError(err instanceof Error ? err.message : String(err));
-          setLoading(false);
+          if (active) {
+            setEncoded(encodedStr);
+            setLoading(false);
+          }
+        } catch (err) {
+          console.error("PlantUML Compression Error:", err);
+          if (active) {
+            setError(err instanceof Error ? err.message : String(err));
+            setLoading(false);
+          }
         }
       }
-    }
 
-    void encodeDiagram();
+      void encodeDiagram();
+    }, 600);
 
     return () => {
       active = false;
+      clearTimeout(debounceTimer);
     };
   }, [code]);
 

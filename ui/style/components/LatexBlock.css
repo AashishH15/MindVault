@@ -157,7 +157,7 @@ span.copied {
   margin: 0 auto; /* Center the paper block horizontally */
   background: #fcfbf8; /* Elegant premium soft academic paper tone */
   color: #1a1916;
-  padding: 55px 65px;
+  padding: clamp(20px, 6%, 55px) clamp(15px, 8%, 65px);
   border-radius: 8px;
   box-shadow:
     0 15px 45px rgba(0, 0, 0, 0.25),
@@ -474,4 +474,145 @@ ol.latex-list-ordered {
 .latex-paper-view .katex {
   font-size: 1.05em;
   color: #000000;
+}
+
+/* ----------------------------------------------------------------------
+   Premium Academic Typography & Spacing Overrides
+   ---------------------------------------------------------------------- */
+
+/* Inline Size Overrides */
+.latex-paper-view .latex-size-LARGE {
+  font-size: 1.62em;
+  font-weight: 800;
+  letter-spacing: -0.3px;
+  line-height: 1.2;
+}
+
+.latex-paper-view .latex-size-Large {
+  font-size: 1.32em;
+  font-weight: 700;
+  letter-spacing: -0.2px;
+  line-height: 1.3;
+}
+
+.latex-paper-view .latex-size-large {
+  font-size: 1.15em;
+  font-weight: 600;
+}
+
+.latex-paper-view .latex-size-small {
+  font-size: 9.5pt;
+}
+
+.latex-paper-view .latex-size-footnotesize {
+  font-size: 8.5pt;
+  color: #3b3a36;
+}
+
+.latex-paper-view .latex-size-scriptsize {
+  font-size: 7.8pt;
+  color: #51504b;
+}
+
+.latex-paper-view .latex-size-tiny {
+  font-size: 6.8pt;
+  color: #61605b;
+}
+
+/* Clickable Hyperlinks */
+.latex-paper-view a.latex-link {
+  color: #00008b;
+  text-decoration: none;
+  border-bottom: 1px solid rgba(0, 0, 139, 0.15);
+  font-weight: 500;
+  transition: all 0.2s ease;
+}
+
+.latex-paper-view a.latex-link:hover {
+  color: #1e3a8a;
+  border-bottom-color: #1e3a8a;
+  background-color: rgba(0, 0, 139, 0.04);
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+/* Horizontal Fill Containers */
+.latex-hfill-line {
+  margin: 4px 0;
+  font-family: inherit;
+}
+
+.latex-hfill-left {
+  font-weight: inherit;
+  color: inherit;
+}
+
+.latex-hfill-right {
+  font-style: italic;
+  color: #3b3a36;
+}
+
+/* Center blocks formatting */
+.latex-center-block {
+  line-height: 1.5;
+  color: #1c1b18;
+}
+
+/* ==========================================================================
+   Full-Height & Responsive Embed overrides for Node Editor Split-Panes
+   ========================================================================== */
+
+/* Remove card/envelope styling to let paper fill the preview column cleanly */
+.paper-preview .latex-block-wrapper {
+  margin: 0;
+  border: none;
+  background: transparent;
+  backdrop-filter: none;
+  box-shadow: none;
+  height: auto;
+  border-radius: 0;
+}
+
+/* Hide redundant Paper Preview / Source Code tab switcher since source code editor is already active on the left */
+.paper-preview .latex-tabs {
+  display: none;
+}
+
+/* Completely hide the header and its action buttons inside Node Editor preview */
+.paper-preview .latex-block-header {
+  display: none;
+}
+
+.paper-preview .latex-block-wrapper:hover {
+  box-shadow: none;
+}
+
+.paper-preview .latex-block-body {
+  max-height: none;
+  height: auto;
+  flex-grow: 1;
+}
+
+.paper-preview .latex-paper-scroll-container,
+.paper-preview .latex-source-scroll-container {
+  max-height: none;
+  height: auto;
+  overflow: visible;
+  flex-grow: 1;
+  padding: 0;
+  background: transparent;
+}
+
+.paper-preview .latex-paper-view {
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  max-width: 100%;
+  width: 100%;
+  height: auto;
+  min-height: 100%;
+  padding: clamp(20px, 6%, 55px) clamp(15px, 8%, 65px);
+  animation: none;
+  background: transparent;
 }

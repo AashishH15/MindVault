@@ -43,32 +43,35 @@ export default function MermaidBlock({ code }: MermaidBlockProps) {
     // Mermaid needs a unique ID that starts with a letter and has no special characters
     const renderId = `mermaid-${Math.random().toString(36).substring(2, 9)}`;
 
-    async function renderDiagram() {
-      try {
-        setError(null);
+    const debounceTimer = setTimeout(() => {
+      async function renderDiagram() {
+        try {
+          setError(null);
 
-        // Remove any old mermaid error elements left in the DOM from failed rendering
-        const badElements = document.querySelectorAll(`[id^="d${renderId}"], .mermaidTooltip`);
-        badElements.forEach((el) => el.remove());
+          // Remove any old mermaid error elements left in the DOM from failed rendering
+          const badElements = document.querySelectorAll(`[id^="d${renderId}"], .mermaidTooltip`);
+          badElements.forEach((el) => el.remove());
 
-        // Perform rendering using Mermaid's async render API
-        const { svg: renderedSvg } = await mermaid.render(renderId, code);
+          // Perform rendering using Mermaid's async render API
+          const { svg: renderedSvg } = await mermaid.render(renderId, code);
 
-        if (active) {
-          setSvg(renderedSvg);
-        }
-      } catch (err) {
-        console.error("Mermaid Render Error:", err);
-        if (active) {
-          setError(err instanceof Error ? err.message : String(err));
+          if (active) {
+            setSvg(renderedSvg);
+          }
+        } catch (err) {
+          console.error("Mermaid Render Error:", err);
+          if (active) {
+            setError(err instanceof Error ? err.message : String(err));
+          }
         }
       }
-    }
 
-    void renderDiagram();
+      void renderDiagram();
+    }, 600);
 
     return () => {
       active = false;
+      clearTimeout(debounceTimer);
     };
   }, [code]);
 

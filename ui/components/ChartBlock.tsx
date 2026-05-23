@@ -82,15 +82,24 @@ export default function ChartBlock({ language, code }: ChartBlockProps) {
     }
   };
 
+  const [debouncedCode, setDebouncedCode] = useState(code);
+
+  React.useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedCode(code);
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [code]);
+
   // Run JSON validation and schema routing inside useMemo to avoid cascading renders
   const { parsedData, mathExpressions, error } = useMemo(() => {
     let json: unknown;
     try {
-      json = JSON.parse(code);
+      json = JSON.parse(debouncedCode);
     } catch (err) {
       // Fallback: Attempt parsing with jsonrepair
       try {
-        const repaired = jsonrepair(code);
+        const repaired = jsonrepair(debouncedCode);
         json = JSON.parse(repaired);
       } catch (repairErr) {
         return {
@@ -228,7 +237,7 @@ export default function ChartBlock({ language, code }: ChartBlockProps) {
       mathExpressions: [],
       error: "Unrecognized Chart Schema: JSON must specify either a Math Plot or a Plotly Chart.",
     };
-  }, [code]);
+  }, [debouncedCode]);
 
   // Domain bounding boxes
   const domainX = parsedData?.domainX || [-5, 5];
