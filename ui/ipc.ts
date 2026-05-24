@@ -285,3 +285,21 @@ export function memoryExtractIfReady(provider: string, endpoint: string, model: 
     .then((ok) => ({ ok }) as IpcResult<Changeset | null>)
     .catch((error) => ({ err: String(error) }) as IpcResult<Changeset | null>);
 }
+
+export function changesetCountPending() {
+  return invoke<number>("changeset_count_pending")
+    .then((ok) => ({ ok }) as IpcResult<number>)
+    .catch((error) => ({ err: String(error) }) as IpcResult<number>);
+}
+
+export function changesetListPending() {
+  return invoke<Changeset[]>("changeset_list_pending")
+    .then((ok) => ({ ok }) as IpcResult<Changeset[]>)
+    .catch((error) => ({ err: String(error) }) as IpcResult<Changeset[]>);
+}
+
+export function changesetListItems(changesetId: string) {
+  return invoke<ChangesetItem[]>("changeset_list_items", { changesetId })
+    .then((ok) => ({ ok }) as IpcResult<ChangesetItem[]>)
+    .catch((error) => ({ err: String(error) }) as IpcResult<ChangesetItem[]>);
+}

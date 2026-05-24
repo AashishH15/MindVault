@@ -18,8 +18,8 @@ mod priority;
 mod privacy;
 mod redacted;
 use ipc_types::{
-    Backlink, Changeset, Door, DoorCreateInput, Node, NodeCreateInput, NodeUpdateInput,
-    OnboardingNodeCommitInput, OnboardingProposedNode, Tag, TagCreateInput, Vault,
+    Backlink, Changeset, ChangesetItem, Door, DoorCreateInput, Node, NodeCreateInput,
+    NodeUpdateInput, OnboardingNodeCommitInput, OnboardingProposedNode, Tag, TagCreateInput, Vault,
     VaultCreateInput, VaultUpdateInput,
 };
 
@@ -171,29 +171,47 @@ async fn execute_memory_extraction_pipeline(
     // 6. Parse response
     let candidates = memory_agent::parser::parse_candidates_json(&raw)?;
 
-    // 7. Open connection synchronously to build changeset
-    let pending_changeset = {
-        let conn = open_connection(&db_path)?;
-        memory_agent::changeset::build_changeset(&conn, &candidates, "default-session")?
+    // 7. Open connection synchronously and persist changeset inside a Transaction
+    let changeset_id = {
+        let mut conn = open_connection(&db_path)?;
+        let tx = conn
+            .transaction()
+            .map_err(|err| format!("Failed to start transaction: {err}"))?;
+
+        let pending_changeset =
+            memory_agent::changeset::build_changeset(&tx, &candidates, "default-session")?;
+
+        let persisted_id =
+            memory_agent::persistence::persist_changeset(&tx, &pending_changeset, Some(&model))?;
+
+        tx.commit()
+            .map_err(|err| format!("Failed to commit transaction: {err}"))?;
+        persisted_id
     };
 
-    // 8. Form the final Changeset struct
-    let item_count = pending_changeset.items.len() as i64;
-    let now_unix = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|err| format!("System clock before UNIX_EPOCH: {err}"))?
-        .as_secs();
-
-    let cs = Changeset {
-        id: "cs_temp".to_string(),
-        session_id: Some("default-session".to_string()),
-        status: "pending".to_string(),
-        item_count,
-        accepted_count: 0,
-        dismissed_count: 0,
-        model_used: Some(model),
-        created_at: now_unix.to_string(),
-        reviewed_at: None,
+    // 8. Retrieve the newly persisted Changeset from SQLite
+    let cs = {
+        let conn = open_connection(&db_path)?;
+        conn.query_row(
+            "SELECT id, session_id, status, item_count, accepted_count, dismissed_count, model_used, created_at, reviewed_at
+             FROM changesets
+             WHERE id = ?1 LIMIT 1;",
+            [changeset_id],
+            |row| {
+                Ok(Changeset {
+                    id: row.get(0)?,
+                    session_id: row.get(1)?,
+                    status: row.get(2)?,
+                    item_count: row.get(3)?,
+                    accepted_count: row.get(4)?,
+                    dismissed_count: row.get(5)?,
+                    model_used: row.get(6)?,
+                    created_at: row.get(7)?,
+                    reviewed_at: row.get(8)?,
+                })
+            },
+        )
+        .map_err(|err| format!("Failed to retrieve persisted changeset: {err}"))?
     };
 
     Ok(cs)
@@ -258,6 +276,27 @@ async fn memory_extract_if_ready(
     Ok(Some(changeset))
 }
 
+#[tauri::command]
+fn changeset_count_pending(state: tauri::State<'_, AppState>) -> Result<i64, String> {
+    let conn = open_connection(&state.db_path)?;
+    memory_agent::persistence::count_pending_items(&conn)
+}
+
+#[tauri::command]
+fn changeset_list_pending(state: tauri::State<'_, AppState>) -> Result<Vec<Changeset>, String> {
+    let conn = open_connection(&state.db_path)?;
+    memory_agent::persistence::list_pending_changesets(&conn)
+}
+
+#[tauri::command]
+fn changeset_list_items(
+    changeset_id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<ChangesetItem>, String> {
+    let conn = open_connection(&state.db_path)?;
+    memory_agent::persistence::list_changeset_items(&conn, &changeset_id)
+}
+
 fn sqlite_db_path<R: tauri::Runtime>(
     app: &tauri::App<R>,
 ) -> Result<PathBuf, Box<dyn std::error::Error>> {
@@ -281,7 +320,7 @@ pub(crate) fn open_connection(db_path: &Path) -> Result<Connection, String> {
     Ok(conn)
 }
 
-fn generate_id(conn: &Connection, prefix: &str) -> Result<String, String> {
+pub(crate) fn generate_id(conn: &Connection, prefix: &str) -> Result<String, String> {
     conn.query_row(
         "SELECT ?1 || '_' || lower(hex(randomblob(8)));",
         [prefix],
@@ -2828,7 +2867,10 @@ pub fn run() {
             onboarding_commit,
             save_markdown_file,
             memory_extract,
-            memory_extract_if_ready
+            memory_extract_if_ready,
+            changeset_count_pending,
+            changeset_list_pending,
+            changeset_list_items
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|err| {

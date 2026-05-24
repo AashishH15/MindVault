@@ -1,4 +1,12 @@
-import { memoryExtract, memoryExtractIfReady, type Changeset } from "../ipc";
+import {
+  memoryExtract,
+  memoryExtractIfReady,
+  type Changeset,
+  changesetCountPending,
+  changesetListPending,
+  changesetListItems,
+  type ChangesetItem,
+} from "../ipc";
 import { unwrapIpcResult } from "./ipcResult";
 
 /**
@@ -23,6 +31,27 @@ export async function extractMemoryIfReady(
   return unwrapIpcResult(memoryExtractIfReady(provider, endpoint, model));
 }
 
+/**
+ * Counts total pending changeset items.
+ */
+export async function countPendingChangesetItems(): Promise<number> {
+  return unwrapIpcResult(changesetCountPending());
+}
+
+/**
+ * Lists all pending changesets.
+ */
+export async function listPendingChangesets(): Promise<Changeset[]> {
+  return unwrapIpcResult(changesetListPending());
+}
+
+/**
+ * Lists all items belonging to a specific changeset.
+ */
+export async function listChangesetItems(changesetId: string): Promise<ChangesetItem[]> {
+  return unwrapIpcResult(changesetListItems(changesetId));
+}
+
 // Expose temporary debug helpers on window for manual console testing
 if (typeof window !== "undefined") {
   const w = window as unknown as Record<string, unknown>;
@@ -37,5 +66,14 @@ if (typeof window !== "undefined") {
     const e = endpoint || "http://localhost:11434";
     const m = model || "granite4.1:3b";
     return extractMemoryIfReady(p, e, m).then(console.log).catch(console.error);
+  };
+  w.testCountPendingChangesetItems = () => {
+    return countPendingChangesetItems().then(console.log).catch(console.error);
+  };
+  w.testListPendingChangesets = () => {
+    return listPendingChangesets().then(console.log).catch(console.error);
+  };
+  w.testListChangesetItems = (changesetId: string) => {
+    return listChangesetItems(changesetId).then(console.log).catch(console.error);
   };
 }
