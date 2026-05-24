@@ -111,44 +111,39 @@ pub fn check_rate_limit(key: &str) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
-async fn memory_extract(
+async fn execute_memory_extraction_pipeline(
     provider: String,
     endpoint: String,
     model: String,
-    state: tauri::State<'_, AppState>,
+    db_path: PathBuf,
 ) -> Result<Changeset, String> {
-    // 1. Enforce governor rate-limiting first
-    check_rate_limit("memory_agent")?;
+    // 1. Load chat history synchronously within scoped block to drop connection before await
+    let chat_history = {
+        let conn = open_connection(&db_path)?;
+        let history = chat::get_chat_history(&conn)?;
+        if history.len() < 3 {
+            return Err(
+                "Insufficient chat history (need at least 3 messages) to extract memory."
+                    .to_string(),
+            );
+        }
+        history
+    };
 
-    // 2. Open connection
-    let db_path = state.db_path.clone();
-    let conn = open_connection(&db_path)?;
-
-    // 3. Load chat history
-    let chat_history = chat::get_chat_history(&conn)?;
-
-    // 4. If fewer than 3 messages, return early
-    if chat_history.len() < 3 {
-        return Err(
-            "Insufficient chat history (need at least 3 messages) to extract memory.".to_string(),
-        );
-    }
-
-    // 5. Format conversation
+    // 2. Format conversation
     let mut conversation_text = String::new();
     for msg in &chat_history {
         conversation_text.push_str(&format!("{}: {}\n", msg.role, msg.content));
     }
     let user_content = format!("<conversation>\n{}\n</conversation>", conversation_text);
 
-    // 6. Build LLM message
+    // 3. Build LLM message
     let messages = [llm::client::LlmMessage {
         role: "user".to_string(),
         content: user_content,
     }];
 
-    // 7. Resolve provider
+    // 4. Resolve provider
     let parsed_provider = match provider.trim().to_lowercase().as_str() {
         "ollama" => llm::client::LlmProvider::Ollama,
         "lmstudio" => llm::client::LlmProvider::LmStudio,
@@ -159,7 +154,7 @@ async fn memory_extract(
         _ => return Err("Unsupported provider. Use 'ollama', 'lmstudio', 'anthropic', 'openai', 'google', or 'xai'.".to_string()),
     };
 
-    // 8. Call UniversalClient::complete
+    // 5. Call UniversalClient::complete
     let client = llm::client::UniversalClient::new(
         parsed_provider,
         endpoint.trim().to_string(),
@@ -173,14 +168,16 @@ async fn memory_extract(
     )
     .await?;
 
-    // 9. Parse response
+    // 6. Parse response
     let candidates = memory_agent::parser::parse_candidates_json(&raw)?;
 
-    // 10. Build changeset
-    let pending_changeset =
-        memory_agent::changeset::build_changeset(&conn, &candidates, "default-session")?;
+    // 7. Open connection synchronously to build changeset
+    let pending_changeset = {
+        let conn = open_connection(&db_path)?;
+        memory_agent::changeset::build_changeset(&conn, &candidates, "default-session")?
+    };
 
-    // 11. Form the final Changeset struct
+    // 8. Form the final Changeset struct
     let item_count = pending_changeset.items.len() as i64;
     let now_unix = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -200,6 +197,65 @@ async fn memory_extract(
     };
 
     Ok(cs)
+}
+
+#[tauri::command]
+async fn memory_extract(
+    provider: String,
+    endpoint: String,
+    model: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<Changeset, String> {
+    // 1. Enforce governor rate-limiting first
+    check_rate_limit("memory_agent")?;
+
+    // 2. Execute shared pipeline
+    let db_path = state.db_path.clone();
+    execute_memory_extraction_pipeline(provider, endpoint, model, db_path).await
+}
+
+#[tauri::command]
+async fn memory_extract_if_ready(
+    provider: String,
+    endpoint: String,
+    model: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<Option<Changeset>, String> {
+    // 1. Enforce governor rate-limiting first
+    check_rate_limit("memory_agent")?;
+
+    // 2. Open connection synchronously to run trigger checks
+    let db_path = state.db_path.clone();
+    let conn = open_connection(&db_path)?;
+
+    // 3. Query total message count
+    let session_id = "default-session";
+    let current_message_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM session_messages WHERE session_id = ?1;",
+            [session_id],
+            |row| row.get(0),
+        )
+        .map_err(|err| format!("Failed querying session message count: {err}"))?;
+
+    // 4. Check trigger
+    let ready = memory_agent::trigger::should_extract(&conn, session_id)?;
+    if !ready {
+        return Ok(None);
+    }
+
+    // Drop connection explicitly before starting any await calls
+    drop(conn);
+
+    // 5. Execute shared pipeline
+    let changeset =
+        execute_memory_extraction_pipeline(provider, endpoint, model, db_path.clone()).await?;
+
+    // 6. Open connection synchronously to mark extraction complete
+    let conn = open_connection(&db_path)?;
+    memory_agent::trigger::mark_extraction_complete(&conn, current_message_count)?;
+
+    Ok(Some(changeset))
 }
 
 fn sqlite_db_path<R: tauri::Runtime>(
@@ -2771,7 +2827,8 @@ pub fn run() {
             onboarding_extract_proposals,
             onboarding_commit,
             save_markdown_file,
-            memory_extract
+            memory_extract,
+            memory_extract_if_ready
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|err| {

@@ -279,3 +279,9 @@ export function memoryExtract(provider: string, endpoint: string, model: string)
     .then((ok) => ({ ok }) as IpcResult<Changeset>)
     .catch((error) => ({ err: String(error) }) as IpcResult<Changeset>);
 }
+
+export function memoryExtractIfReady(provider: string, endpoint: string, model: string) {
+  return invoke<Changeset | null>("memory_extract_if_ready", { provider, endpoint, model })
+    .then((ok) => ({ ok }) as IpcResult<Changeset | null>)
+    .catch((error) => ({ err: String(error) }) as IpcResult<Changeset | null>);
+}

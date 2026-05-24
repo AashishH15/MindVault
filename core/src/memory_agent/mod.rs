@@ -2,6 +2,7 @@ pub mod changeset;
 pub mod parser;
 pub mod prompt;
 pub mod similarity;
+pub mod trigger;
 
 pub use changeset::{build_changeset, ChangesetItemType, PendingChangeset, PendingChangesetItem};
 pub use parser::{
@@ -12,3 +13,4 @@ pub use similarity::{
     classify_similarity, compute_text_similarity, jaccard_similarity, tokenize, SimilarityClass,
     SIMILARITY_DUPLICATE, SIMILARITY_FLAG,
 };
+pub use trigger::{mark_extraction_complete, should_extract};

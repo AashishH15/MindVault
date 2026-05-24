@@ -26,6 +26,7 @@ import {
 import { chatWithScope } from "../services/nodes";
 import { getSetting } from "../services/settings";
 import { listVaults } from "../services/vaults";
+import { extractMemoryIfReady } from "../services/memoryAgent";
 import {
   getLlmModel,
   getLlmProvider,
@@ -556,6 +557,11 @@ function ChatPanel({
 
       setMessages((prev) => [...prev, aiMsg]);
       await chatAppendMessage(aiMsgId, "assistant", aiResponse);
+
+      // Fire-and-forget background extraction check (non-blocking for the user)
+      extractMemoryIfReady(provider, endpoint, model).catch((err) => {
+        console.error("Background memory extraction check failed:", err);
+      });
     } catch (error) {
       setStatus(String(error));
     } finally {
