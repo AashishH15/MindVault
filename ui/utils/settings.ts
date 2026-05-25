@@ -21,13 +21,15 @@ export function getLlmProvider(): string {
   return DEFAULT_PROVIDER;
 }
 
-export function setLlmProvider(provider: string): void {
+export function setLlmProvider(provider: string, skipEvent = false): void {
   const normalized = provider.trim().toLowerCase();
   const next = ["ollama", "lmstudio", "openai", "anthropic", "google", "xai"].includes(normalized)
     ? normalized
     : DEFAULT_PROVIDER;
   window.localStorage.setItem(LLM_PROVIDER_KEY, next);
-  window.dispatchEvent(new CustomEvent("mindvault:llm-settings-changed"));
+  if (!skipEvent) {
+    window.dispatchEvent(new CustomEvent("mindvault:llm-settings-changed"));
+  }
 }
 
 export function getOllamaEndpoint(): string {
@@ -94,11 +96,11 @@ export function setLlmMode(mode: "local" | "cloud" | "hybrid"): void {
   const currentProvider = getLlmProvider();
   if (mode === "local") {
     if (!["ollama", "lmstudio"].includes(currentProvider)) {
-      setLlmProvider("ollama");
+      setLlmProvider("ollama", true);
     }
   } else if (mode === "cloud") {
     if (!["openai", "anthropic", "google", "xai"].includes(currentProvider)) {
-      setLlmProvider("openai");
+      setLlmProvider("openai", true);
     }
   }
   window.dispatchEvent(new CustomEvent("mindvault:llm-settings-changed"));
