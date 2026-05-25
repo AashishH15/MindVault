@@ -197,9 +197,15 @@ function CloudSettings({
   }, [provider, defaultModel]);
 
   async function handleSave() {
-    await setApiKey(provider, apiKey);
-    setLlmModel(provider, selectedModel);
-    setStatus("Saved cloud configuration.");
+    setStatus("");
+    try {
+      await setApiKey(provider, apiKey);
+      setLlmModel(provider, selectedModel);
+      setStatus("Saved cloud configuration.");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setStatus(`Failed to save cloud configuration: ${message}`);
+    }
   }
 
   return (
