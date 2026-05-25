@@ -233,6 +233,8 @@ function CloudSettings({
             type="button"
             className="eye-toggle"
             onClick={() => setApiKeyVisible(!apiKeyVisible)}
+            aria-label={apiKeyVisible ? "Hide API key" : "Show API key"}
+            aria-pressed={apiKeyVisible}
           >
             <EyeIcon visible={apiKeyVisible} />
           </button>
