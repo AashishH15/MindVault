@@ -224,7 +224,8 @@ export function chatWithLlm(
   provider: string,
   endpoint: string,
   model: string,
-  userPrompt: string
+  userPrompt: string,
+  isRedactedUnlocked: boolean
 ) {
   return invoke<string>("llm_chat", {
     nodeIds,
@@ -233,6 +234,7 @@ export function chatWithLlm(
     endpoint,
     model,
     userPrompt,
+    isRedactedUnlocked,
   })
     .then((ok) => ({ ok }) as IpcResult<string>)
     .catch((error) => ({ err: String(error) }) as IpcResult<string>);

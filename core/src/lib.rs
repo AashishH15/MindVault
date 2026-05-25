@@ -1991,6 +1991,9 @@ fn debug_assemble_context(
     state: tauri::State<'_, DbState>,
 ) -> IpcResponse<String> {
     into_ipc((|| {
+        // Because a user is running a direct test context request,
+        // we'll assume they just want to see the un-stubbed result for whatever they selected
+        // to simplify the scope of debug.
         let conn = open_connection(&state.db_path)?;
         llm::assembler::build_context(
             &conn,
@@ -1998,6 +2001,7 @@ fn debug_assemble_context(
             llm::assembler::AssemblerConfig {
                 scope,
                 max_tokens: DEFAULT_ASSEMBLER_MAX_TOKENS,
+                is_unlocked: true, // debug command overrides privacy checks locally
             },
         )
     })())
@@ -2027,6 +2031,7 @@ async fn llm_list_models(provider: String, endpoint: String) -> IpcResponse<Vec<
     into_ipc(llm::client::LlmClient::list_models(&client).await)
 }
 
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 async fn llm_chat(
     node_ids: Vec<String>,
@@ -2035,6 +2040,7 @@ async fn llm_chat(
     endpoint: String,
     model: String,
     user_prompt: String,
+    is_redacted_unlocked: bool,
     state: tauri::State<'_, AppState>,
 ) -> Result<String, String> {
     let db_path = state.db_path.clone();
@@ -2047,6 +2053,7 @@ async fn llm_chat(
             llm::assembler::AssemblerConfig {
                 scope,
                 max_tokens: DEFAULT_ASSEMBLER_MAX_TOKENS,
+                is_unlocked: is_redacted_unlocked,
             },
         )
     }?;

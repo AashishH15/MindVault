@@ -159,6 +159,7 @@ type ChatPanelProps = {
   selectedVaultId: string | null;
   onSelectVault: (vaultId: string | null) => void;
   onOpenSettings?: () => void;
+  isRedactedUnlocked: boolean;
 };
 
 function ChatPanel({
@@ -167,6 +168,7 @@ function ChatPanel({
   selectedVaultId,
   onSelectVault,
   onOpenSettings,
+  isRedactedUnlocked,
 }: ChatPanelProps) {
   const MAX_RENDERED_MESSAGES = 120;
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -366,7 +368,8 @@ function ChatPanel({
         provider,
         endpoint,
         model,
-        executionPrompt
+        executionPrompt,
+        isRedactedUnlocked
       );
       await persistUserMessage;
 

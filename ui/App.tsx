@@ -393,6 +393,7 @@ function App() {
                   selectedVaultId={selectedVaultId}
                   onSelectVault={onSelectVault}
                   onOpenSettings={onOpenSettings}
+                  isRedactedUnlocked={isRedactedUnlocked}
                 />
               )}
             </section>
