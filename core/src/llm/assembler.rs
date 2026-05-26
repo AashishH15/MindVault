@@ -92,74 +92,81 @@ fn fetch_requested_nodes(
     db: &Connection,
     node_ids: &[String],
 ) -> Result<Vec<AssemblerNode>, crate::AppError> {
+    if node_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let placeholders = vec!["?"; node_ids.len()].join(", ");
+    let query_str = format!(
+        "SELECT n.id,
+                n.title,
+                n.summary,
+                COALESCE(n.detail, '') AS detail,
+                n.privacy_tier,
+                n.vault_id,
+                n.priority,
+                sv.privacy_tier,
+                v.privacy_tier
+         FROM nodes n
+         LEFT JOIN sub_vaults sv
+           ON sv.id = n.sub_vault_id
+          AND sv.deleted_at IS NULL
+         LEFT JOIN vaults v
+           ON v.id = n.vault_id
+          AND v.deleted_at IS NULL
+         WHERE n.id IN ({placeholders})
+           AND n.deleted_at IS NULL
+           AND n.is_archived = 0;"
+    );
+
     let mut statement = db
-        .prepare(
-            "SELECT n.id,
-                    n.title,
-                    n.summary,
-                    COALESCE(n.detail, '') AS detail,
-                    n.privacy_tier,
-                    n.vault_id,
-                    n.priority,
-                    sv.privacy_tier,
-                    v.privacy_tier
-             FROM nodes n
-             LEFT JOIN sub_vaults sv
-               ON sv.id = n.sub_vault_id
-              AND sv.deleted_at IS NULL
-             LEFT JOIN vaults v
-               ON v.id = n.vault_id
-              AND v.deleted_at IS NULL
-             WHERE n.id = ?1
-               AND n.deleted_at IS NULL
-               AND n.is_archived = 0;",
-        )
+        .prepare(&query_str)
         .map_err(|err| format!("Failed preparing assembler query: {err}"))?;
 
+    let params: Vec<&dyn rusqlite::ToSql> = node_ids
+        .iter()
+        .map(|id| id as &dyn rusqlite::ToSql)
+        .collect();
+
+    let mut rows = statement
+        .query(rusqlite::params_from_iter(params))
+        .map_err(|err| format!("Failed querying nodes for assembler: {err}"))?;
+
     let mut nodes = Vec::new();
-    for node_id in node_ids {
-        let mut rows = statement
-            .query([node_id.as_str()])
-            .map_err(|err| format!("Failed querying node {node_id} for assembler: {err}"))?;
-        let maybe_row = rows
-            .next()
-            .map_err(|err| format!("Failed reading assembler row for node {node_id}: {err}"))?;
-        if let Some(row) = maybe_row {
-            let priority_json: String = row.get(6).map_err(|err| {
-                format!("Failed decoding priority field for node {node_id} in assembler: {err}")
-            })?;
-            nodes.push(AssemblerNode {
-                id: row.get(0).map_err(|err| {
-                    format!("Failed decoding id field for node {node_id} in assembler: {err}")
-                })?,
-                title: row.get(1).map_err(|err| {
-                    format!("Failed decoding title field for node {node_id} in assembler: {err}")
-                })?,
-                summary: row.get(2).map_err(|err| {
-                    format!("Failed decoding summary field for node {node_id} in assembler: {err}")
-                })?,
-                detail: row.get(3).map_err(|err| {
-                    format!("Failed decoding detail field for node {node_id} in assembler: {err}")
-                })?,
-                node_privacy_tier: row.get(4).map_err(|err| {
-                    format!(
-                        "Failed decoding node privacy field for node {node_id} in assembler: {err}"
-                    )
-                })?,
-                sub_vault_privacy_tier: row.get(7).map_err(|err| {
-                    format!(
-                        "Failed decoding sub-vault privacy field for node {node_id} in assembler: {err}"
-                    )
-                })?,
-                vault_privacy_tier: row.get(8).map_err(|err| {
-                    format!(
-                        "Failed decoding vault privacy field for node {node_id} in assembler: {err}"
-                    )
-                })?,
-                score: parse_score(&priority_json),
-            });
-        }
+    while let Some(row) = rows
+        .next()
+        .map_err(|err| format!("Failed reading assembler row: {err}"))?
+    {
+        let id: String = row
+            .get(0)
+            .map_err(|err| format!("Failed decoding id field in assembler: {err}"))?;
+        let priority_json: String = row.get(6).map_err(|err| {
+            format!("Failed decoding priority field for node {id} in assembler: {err}")
+        })?;
+        nodes.push(AssemblerNode {
+            id,
+            title: row
+                .get(1)
+                .map_err(|err| format!("Failed decoding title field in assembler: {err}"))?,
+            summary: row
+                .get(2)
+                .map_err(|err| format!("Failed decoding summary field in assembler: {err}"))?,
+            detail: row
+                .get(3)
+                .map_err(|err| format!("Failed decoding detail field in assembler: {err}"))?,
+            node_privacy_tier: row
+                .get(4)
+                .map_err(|err| format!("Failed decoding node privacy field in assembler: {err}"))?,
+            sub_vault_privacy_tier: row.get(7).map_err(|err| {
+                format!("Failed decoding sub-vault privacy field in assembler: {err}")
+            })?,
+            vault_privacy_tier: row.get(8).map_err(|err| {
+                format!("Failed decoding vault privacy field in assembler: {err}")
+            })?,
+            score: parse_score(&priority_json),
+        });
     }
+
     Ok(nodes)
 }
 
