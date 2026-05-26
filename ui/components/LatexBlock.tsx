@@ -254,7 +254,7 @@ function segmentizeBlock(text: string): SizedSegment[] {
             const innerContent = text.substring(start, i - 1);
             const after = text.substring(i);
 
-            const sizeClass = macro.replace("\\", "").replace("{", "");
+            const sizeClass = macro.replace(/\\/g, "").replace(/\{/g, "");
             const segments: SizedSegment[] = [];
 
             if (before.trim()) {
@@ -428,7 +428,7 @@ function renderInlineText(text: string): React.ReactNode[] {
           nearestMacro === "\\scriptsize{" ||
           nearestMacro === "\\tiny{"
         ) {
-          const sizeClass = nearestMacro.replace("\\", "").replace("{", "");
+          const sizeClass = nearestMacro.replace(/\\/g, "").replace(/\{/g, "");
           result.push(
             <span key={`size-${keyCounter++}`} className={`latex-size-${sizeClass}`}>
               {renderInlineText(content)}

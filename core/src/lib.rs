@@ -2593,7 +2593,6 @@ async fn llm_list_models(provider: String, endpoint: String) -> IpcResponse<Vec<
 
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
-#[allow(clippy::too_many_arguments)]
 async fn llm_chat(
     node_ids: Vec<String>,
     scope: String,
