@@ -57,20 +57,21 @@ fn greet(name: &str) -> IpcResponse<String> {
 }
 
 #[tauri::command]
-fn save_markdown_file(default_name: String, content: String) -> IpcResponse<bool> {
+async fn save_markdown_file(default_name: String, content: String) -> IpcResponse<bool> {
     if content.len() > 10_000_000 {
         return IpcResponse::Err {
             err: "Content exceeds maximum export size".into(),
         };
     }
 
-    let path = rfd::FileDialog::new()
+    let path = rfd::AsyncFileDialog::new()
         .set_file_name(&default_name)
         .add_filter("Markdown", &["md"])
-        .save_file();
+        .save_file()
+        .await;
 
     match path {
-        Some(p) => match std::fs::write(&p, content) {
+        Some(handle) => match std::fs::write(handle.path(), &content) {
             Ok(_) => IpcResponse::Ok { ok: true },
             Err(e) => IpcResponse::Err { err: e.to_string() },
         },
