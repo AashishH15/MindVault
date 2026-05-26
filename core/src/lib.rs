@@ -286,7 +286,7 @@ pub async fn execute_memory_extraction_pipeline(
     .await?;
 
     // 6. Parse response
-    let candidates = match memory_agent::parser::parse_candidates_json(&raw) {
+    let candidates = match memory_agent::parser::parse_candidates_from_llm_output(&raw) {
         Ok(c) => c,
         Err(err) => {
             eprintln!("Failed to parse candidates JSON, logging raw response and recovering gracefully: {err}");

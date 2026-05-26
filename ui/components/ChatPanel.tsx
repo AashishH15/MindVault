@@ -674,9 +674,12 @@ function ChatPanel({
     setEditingContent("");
   }, []);
 
-  async function handleSaveEdit(index: number, newContent: string) {
+  async function handleSaveEdit(visibleIndex: number, newContent: string) {
     if (isSending || isClearing || !newContent.trim()) return;
 
+    // The UI passes an index relative to visibleMessages (a tail slice of messages).
+    // Offset by hiddenMessageCount to get the correct index into the full messages array.
+    const index = visibleIndex + hiddenMessageCount;
     const userMsg = messages[index];
     if (userMsg.content === newContent) {
       setEditingMessageId(null);
@@ -702,8 +705,12 @@ function ChatPanel({
     }
   }
 
-  async function handleRetryMessage(index: number) {
+  async function handleRetryMessage(visibleIndex: number) {
     if (isSending || isClearing) return;
+
+    // The UI passes an index relative to visibleMessages (a tail slice of messages).
+    // Offset by hiddenMessageCount to get the correct index into the full messages array.
+    const index = visibleIndex + hiddenMessageCount;
 
     // Find the user message index
     let userIndex = -1;
