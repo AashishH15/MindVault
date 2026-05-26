@@ -434,9 +434,9 @@ export default function ChartBlock({ language, code }: ChartBlockProps) {
   const evaluateForX = (rpn: string[], xVal: number) => {
     try {
       const res = evaluateRpn(rpn, xVal);
-      return isNaN(res) || !isFinite(res) ? 0 : res;
+      return isNaN(res) || !isFinite(res) ? NaN : res;
     } catch {
-      return 0;
+      return NaN;
     }
   };
 
