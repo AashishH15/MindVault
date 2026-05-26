@@ -171,6 +171,17 @@ function runVaultServiceTests() {
     "DeadEnd",
     "resolveVaultPath Test B.5"
   );
+
+  // Case C.1: Test with pre-computed Map
+  const mockMap = new Map<string, Vault>();
+  mockMap.set("v1", vault1 as Vault);
+  mockMap.set("v2", vault2 as Vault);
+  const resMap = resolveVaultPath({ vaultId: "v1", subVaultId: "v2" } as Node, mockMap);
+  if (resMap !== "Work / Projects") {
+    throw new Error(
+      `resolveVaultPath Test C.1 Failed: Expected 'Work / Projects', got '${resMap}'`
+    );
+  }
 }
 
 function runSvgSanitizerTests() {
