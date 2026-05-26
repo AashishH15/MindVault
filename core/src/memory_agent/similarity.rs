@@ -208,13 +208,17 @@ pub fn tokenize(text: &str) -> HashSet<String> {
 pub fn jaccard_similarity(a: &str, b: &str) -> f64 {
     let set_a = tokenize(a);
     let set_b = tokenize(b);
+    jaccard_similarity_pretokenized(&set_a, &set_b)
+}
 
+/// Compute Jaccard similarity from pre-tokenized sets, avoiding redundant tokenization
+pub fn jaccard_similarity_pretokenized(set_a: &HashSet<String>, set_b: &HashSet<String>) -> f64 {
     if set_a.is_empty() || set_b.is_empty() {
         return 0.0;
     }
 
-    let intersection_size = set_a.intersection(&set_b).count() as f64;
-    let union_size = set_a.union(&set_b).count() as f64;
+    let intersection_size = set_a.intersection(set_b).count() as f64;
+    let union_size = set_a.union(set_b).count() as f64;
 
     intersection_size / union_size
 }

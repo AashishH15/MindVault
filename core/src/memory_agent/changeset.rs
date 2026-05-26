@@ -1,9 +1,11 @@
 use crate::memory_agent::parser::{CandidateAction, CandidateNode};
 use crate::memory_agent::similarity::{
-    classify_similarity, compute_text_similarity, jaccard_similarity, SimilarityClass,
+    classify_similarity, jaccard_similarity, jaccard_similarity_pretokenized, tokenize,
+    SimilarityClass,
 };
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 
 /// The type of action proposed by an individual item in a changeset.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -113,10 +115,12 @@ pub fn build_changeset(
         })
         .map_err(|err| format!("Failed to execute nodes query: {err}"))?;
 
-    let mut existing_nodes = Vec::new();
+    // Pre-tokenize existing nodes once (N tokenizations) to avoid re-tokenizing
+    let mut existing_nodes: Vec<(DbNode, HashSet<String>)> = Vec::new();
     for row_res in node_rows {
         let node = row_res.map_err(|err| format!("Failed to parse database node: {err}"))?;
-        existing_nodes.push(node);
+        let tokens = tokenize(&format!("{} {}", node.title, node.summary));
+        existing_nodes.push((node, tokens));
     }
 
     let mut items = Vec::new();
@@ -127,13 +131,14 @@ pub fn build_changeset(
             continue;
         }
 
-        // Find best similarity match
-        let mut best_match: Option<(&DbNode, f64)> = None;
-        let candidate_combined = format!("{} {}", candidate.title, candidate.summary);
+        // Pre-tokenize each candidate once (M tokenizations total across all candidates)
+        let candidate_tokens = tokenize(&format!("{} {}", candidate.title, candidate.summary));
 
-        for existing in &existing_nodes {
-            let existing_combined = format!("{} {}", existing.title, existing.summary);
-            let score = compute_text_similarity(&candidate_combined, &existing_combined);
+        // Find best similarity match using pre-tokenized sets
+        let mut best_match: Option<(&DbNode, f64)> = None;
+
+        for (existing, existing_tokens) in &existing_nodes {
+            let score = jaccard_similarity_pretokenized(&candidate_tokens, existing_tokens);
             if let Some((_, best_score)) = best_match {
                 if score > best_score {
                     best_match = Some((existing, score));
