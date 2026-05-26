@@ -9,6 +9,22 @@ import {
 } from "react-icons/tb";
 import katex from "katex";
 
+// Allowlist-based URL sanitizer to prevent javascript: and data: XSS via \href{}
+function sanitizeHrefUrl(raw: string): string {
+  const trimmed = raw.trim();
+  try {
+    const parsed = new URL(trimmed, window.location.href);
+    const safeProtocols = ["http:", "https:", "mailto:"];
+    if (safeProtocols.includes(parsed.protocol)) {
+      return parsed.href;
+    }
+  } catch {
+    // Not a valid URL — fall through
+  }
+  // Block unsafe or malformed URLs entirely
+  return "about:blank";
+}
+
 interface LatexBlockProps {
   code: string;
 }
@@ -387,7 +403,7 @@ function renderInlineText(text: string): React.ReactNode[] {
               result.push(
                 <a
                   key={`href-${keyCounter++}`}
-                  href={url.trim()}
+                  href={sanitizeHrefUrl(url)}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="latex-link"
@@ -1131,6 +1147,7 @@ export default function LatexBlock({ code }: LatexBlockProps) {
 
     // Premium sandboxed print mechanism: Clone the compiled HTML paper view into a printing iframe,
     // keeping the main window untouched while avoiding styling leakage!
+    // Built entirely via DOM APIs to avoid document.write() XSS sink (CodeQL: DOM text reinterpreted as HTML).
     const printFrame = document.createElement("iframe");
     printFrame.style.position = "fixed";
     printFrame.style.right = "0";
@@ -1142,160 +1159,168 @@ export default function LatexBlock({ code }: LatexBlockProps) {
 
     const frameDoc = printFrame.contentWindow?.document;
     if (frameDoc) {
-      frameDoc.open();
-      frameDoc.write(`
-        <html>
-          <head>
-            <title>${title || "LaTeX Compiled Document"}</title>
-            <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.17.0/dist/katex.min.css">
-            <style>
-              @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400..900;1,400..900&display=swap');
-              body {
-                font-family: "Playfair Display", "Times New Roman", "PT Serif", Georgia, serif;
-                color: #1b1a17;
-                background: #ffffff;
-                padding: 1.5in 1in 1in 1in;
-                margin: 0;
-                font-size: 11pt;
-                line-height: 1.6;
-              }
-              .title {
-                text-align: center;
-                font-size: 20pt;
-                font-weight: bold;
-                margin-bottom: 20px;
-              }
-              .author {
-                text-align: center;
-                font-size: 11pt;
-                margin-bottom: 30px;
-                font-style: italic;
-              }
-              .abstract-block {
-                margin: 0 40px 30px 40px;
-                font-size: 10pt;
-                text-align: justify;
-              }
-              .abstract-title {
-                font-weight: bold;
-                font-style: normal;
-              }
-              .keywords-block {
-                margin: 0 40px 30px 40px;
-                font-size: 10pt;
-              }
-              h2.latex-section {
-                font-size: 13pt;
-                text-transform: uppercase;
-                text-align: center;
-                font-weight: bold;
-                margin-top: 30px;
-                margin-bottom: 15px;
-                border-bottom: 1px solid #1b1a17;
-                padding-bottom: 5px;
-              }
-              h3.latex-subsection {
-                font-size: 11pt;
-                font-weight: bold;
-                margin-top: 20px;
-                margin-bottom: 10px;
-              }
-              h4.latex-subsubsection {
-                font-size: 11pt;
-                font-style: italic;
-                margin-top: 15px;
-                margin-bottom: 5px;
-              }
-              p.latex-paragraph {
-                text-indent: 20px;
-                margin: 0 0 15px 0;
-                text-align: justify;
-              }
-              .latex-equation-container {
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                margin: 20px 0;
-                padding: 0 10px;
-              }
-              .latex-equation-wrapper {
-                flex-grow: 1;
-                text-align: center;
-              }
-              .latex-equation-number {
-                font-size: 11pt;
-                margin-left: 20px;
-              }
-              .latex-table-container {
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-                margin: 25px 0;
-                page-break-inside: avoid;
-              }
-              .latex-table-caption {
-                font-size: 9pt;
-                text-transform: uppercase;
-                margin-bottom: 10px;
-                letter-spacing: 0.5px;
-              }
-              .latex-table-element {
-                border-collapse: collapse;
-                width: 80%;
-                margin: 0 auto;
-              }
-              .latex-table-element th, .latex-table-element td {
-                border-top: 1px solid #1b1a17;
-                border-bottom: 1px solid #1b1a17;
-                padding: 6px 12px;
-                font-size: 10pt;
-                text-align: center;
-              }
-              .latex-figure-container {
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-                margin: 25px 0;
-                page-break-inside: avoid;
-              }
-              .latex-figure-mock {
-                width: 60%;
-                height: 150px;
-                border: 1px dashed #1b1a17;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                margin-bottom: 10px;
-              }
-              .latex-figure-caption {
-                font-size: 9pt;
-                margin-top: 8px;
-              }
-              .latex-verbatim {
-                background: #f5f5f0;
-                border: 1px solid #d3d3c3;
-                padding: 12px;
-                font-family: monospace;
-                font-size: 9.5pt;
-                white-space: pre-wrap;
-                margin: 15px 0;
-              }
-              ol.latex-list-ordered, ul.latex-list-unordered {
-                margin: 15px 0;
-                padding-left: 40px;
-              }
-              li {
-                margin-bottom: 6px;
-                text-align: justify;
-              }
-            </style>
-          </head>
-          <body>
-            ${printContainerRef.current.innerHTML}
-          </body>
-        </html>
-      `);
-      frameDoc.close();
+      // Set the document title safely via the DOM property (no HTML parsing)
+      frameDoc.title = title || "LaTeX Compiled Document";
+
+      // Add KaTeX stylesheet via DOM
+      const katexLink = frameDoc.createElement("link");
+      katexLink.setAttribute("rel", "stylesheet");
+      katexLink.setAttribute(
+        "href",
+        "https://cdn.jsdelivr.net/npm/katex@0.17.0/dist/katex.min.css"
+      );
+      frameDoc.head.appendChild(katexLink);
+
+      // Add print styles via DOM
+      const styleEl = frameDoc.createElement("style");
+      styleEl.textContent = `
+        @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400..900;1,400..900&display=swap');
+        body {
+          font-family: "Playfair Display", "Times New Roman", "PT Serif", Georgia, serif;
+          color: #1b1a17;
+          background: #ffffff;
+          padding: 1.5in 1in 1in 1in;
+          margin: 0;
+          font-size: 11pt;
+          line-height: 1.6;
+        }
+        .title {
+          text-align: center;
+          font-size: 20pt;
+          font-weight: bold;
+          margin-bottom: 20px;
+        }
+        .author {
+          text-align: center;
+          font-size: 11pt;
+          margin-bottom: 30px;
+          font-style: italic;
+        }
+        .abstract-block {
+          margin: 0 40px 30px 40px;
+          font-size: 10pt;
+          text-align: justify;
+        }
+        .abstract-title {
+          font-weight: bold;
+          font-style: normal;
+        }
+        .keywords-block {
+          margin: 0 40px 30px 40px;
+          font-size: 10pt;
+        }
+        h2.latex-section {
+          font-size: 13pt;
+          text-transform: uppercase;
+          text-align: center;
+          font-weight: bold;
+          margin-top: 30px;
+          margin-bottom: 15px;
+          border-bottom: 1px solid #1b1a17;
+          padding-bottom: 5px;
+        }
+        h3.latex-subsection {
+          font-size: 11pt;
+          font-weight: bold;
+          margin-top: 20px;
+          margin-bottom: 10px;
+        }
+        h4.latex-subsubsection {
+          font-size: 11pt;
+          font-style: italic;
+          margin-top: 15px;
+          margin-bottom: 5px;
+        }
+        p.latex-paragraph {
+          text-indent: 20px;
+          margin: 0 0 15px 0;
+          text-align: justify;
+        }
+        .latex-equation-container {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin: 20px 0;
+          padding: 0 10px;
+        }
+        .latex-equation-wrapper {
+          flex-grow: 1;
+          text-align: center;
+        }
+        .latex-equation-number {
+          font-size: 11pt;
+          margin-left: 20px;
+        }
+        .latex-table-container {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          margin: 25px 0;
+          page-break-inside: avoid;
+        }
+        .latex-table-caption {
+          font-size: 9pt;
+          text-transform: uppercase;
+          margin-bottom: 10px;
+          letter-spacing: 0.5px;
+        }
+        .latex-table-element {
+          border-collapse: collapse;
+          width: 80%;
+          margin: 0 auto;
+        }
+        .latex-table-element th, .latex-table-element td {
+          border-top: 1px solid #1b1a17;
+          border-bottom: 1px solid #1b1a17;
+          padding: 6px 12px;
+          font-size: 10pt;
+          text-align: center;
+        }
+        .latex-figure-container {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          margin: 25px 0;
+          page-break-inside: avoid;
+        }
+        .latex-figure-mock {
+          width: 60%;
+          height: 150px;
+          border: 1px dashed #1b1a17;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          margin-bottom: 10px;
+        }
+        .latex-figure-caption {
+          font-size: 9pt;
+          margin-top: 8px;
+        }
+        .latex-verbatim {
+          background: #f5f5f0;
+          border: 1px solid #d3d3c3;
+          padding: 12px;
+          font-family: monospace;
+          font-size: 9.5pt;
+          white-space: pre-wrap;
+          margin: 15px 0;
+        }
+        ol.latex-list-ordered, ul.latex-list-unordered {
+          margin: 15px 0;
+          padding-left: 40px;
+        }
+        li {
+          margin-bottom: 6px;
+          text-align: justify;
+        }
+      `;
+      frameDoc.head.appendChild(styleEl);
+
+      // Safe DOM cloning: use importNode to deep-clone the rendered content into the
+      // iframe body instead of reading innerHTML and re-parsing it as raw HTML.
+      // This preserves structure without creating a DOM-text-to-HTML XSS sink.
+      const clonedContent = frameDoc.importNode(printContainerRef.current, true);
+      frameDoc.body.appendChild(clonedContent);
 
       printFrame.contentWindow?.focus();
       // Allow KaTeX fonts to load before opening print dialog
