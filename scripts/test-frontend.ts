@@ -1,5 +1,5 @@
 import { runPrivacyTests } from "../ui/utils/privacy.ts";
-import { AppError, toAppError } from "../ui/services/ipcResult.ts";
+import { AppError, toAppError, unwrapIpcResult } from "../ui/services/ipcResult.ts";
 import { resolveVaultPath } from "../ui/services/vaults.ts";
 import { sanitizeSvgText } from "../ui/utils/svgSanitizer.ts";
 import type { Node, Vault } from "../ui/ipc.ts";
@@ -200,6 +200,35 @@ function runSvgSanitizerTests() {
   assertSanitized("Hello 🚀!", "Hello ", "Test 6");
 }
 
+async function runIpcResultTests() {
+  // Test 1: Successful path
+  const successPromise = Promise.resolve({ ok: "Hello IPC" });
+  const successRes = await unwrapIpcResult(successPromise);
+  if (successRes !== "Hello IPC") {
+    throw new Error(`unwrapIpcResult Test 1 Failed: Expected 'Hello IPC', got '${successRes}'`);
+  }
+
+  // Test 2: Error path
+  const errorPromise = Promise.resolve({ err: "Something broke in Rust core" });
+  try {
+    await unwrapIpcResult(errorPromise);
+    throw new Error(
+      "unwrapIpcResult Test 2 Failed: Expected promise to reject but it resolved successfully"
+    );
+  } catch (err) {
+    if (!(err instanceof AppError)) {
+      throw new Error(
+        `unwrapIpcResult Test 2 Failed: Expected error to be AppError, got '${String(err)}'`
+      );
+    }
+    if (err.message !== "Something broke in Rust core") {
+      throw new Error(
+        `unwrapIpcResult Test 2 Failed: Expected message 'Something broke in Rust core', got '${err.message}'`
+      );
+    }
+  }
+}
+
 try {
   runPrivacyTests();
   console.log("✓ All frontend privacy utility tests passed successfully!");
@@ -209,6 +238,8 @@ try {
   console.log("✓ All vaults service utility tests passed successfully!");
   runSvgSanitizerTests();
   console.log("✓ All SVG sanitizer utility tests passed successfully!");
+  await runIpcResultTests();
+  console.log("✓ All IPC result unwrapping utility tests passed successfully!");
   process.exit(0);
 } catch (err) {
   console.error("Frontend utility self-test failed:", err);
