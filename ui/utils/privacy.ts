@@ -217,4 +217,46 @@ export function runPrivacyTests() {
       `Privacy Test 7 Failed: Expected 'Unknown Vault', got '${displayPathNonexistent}'`
     );
   }
+
+  // Test 8: getPrivacyDisplaySummary - Nullish and empty cases when NOT redacted
+  const s1 = getPrivacyDisplaySummary("  My Summary  ", "open", false);
+  if (s1 !== "My Summary") {
+    throw new Error(`Privacy Test 8a Failed: Expected 'My Summary', got '${s1}'`);
+  }
+  const s2 = getPrivacyDisplaySummary(null, "open", false);
+  if (s2 !== "") {
+    throw new Error(`Privacy Test 8b Failed: Expected '', got '${s2}'`);
+  }
+  const s3 = getPrivacyDisplaySummary(undefined, "open", false);
+  if (s3 !== "") {
+    throw new Error(`Privacy Test 8c Failed: Expected '', got '${s3}'`);
+  }
+  const s4 = getPrivacyDisplaySummary("   ", "open", false);
+  if (s4 !== "") {
+    throw new Error(`Privacy Test 8d Failed: Expected '', got '${s4}'`);
+  }
+
+  // Test 9: getPrivacyDisplaySummary - Privacy tiers with isUnlocked = false
+  const s5 = getPrivacyDisplaySummary("Secret info", "redacted", false);
+  if (s5 !== "[Metadata Locked]") {
+    throw new Error(`Privacy Test 9a Failed: Expected '[Metadata Locked]', got '${s5}'`);
+  }
+  const s6 = getPrivacyDisplaySummary("Secret info", "redacted", false, "Custom Redacted");
+  if (s6 !== "Custom Redacted") {
+    throw new Error(`Privacy Test 9b Failed: Expected 'Custom Redacted', got '${s6}'`);
+  }
+  const s7 = getPrivacyDisplaySummary("Secret info", "locked", false);
+  if (s7 !== "Secret info") {
+    throw new Error(`Privacy Test 9c Failed: Expected 'Secret info', got '${s7}'`);
+  }
+  const s8 = getPrivacyDisplaySummary("Secret info", "local_only", false);
+  if (s8 !== "Secret info") {
+    throw new Error(`Privacy Test 9d Failed: Expected 'Secret info', got '${s8}'`);
+  }
+
+  // Test 10: getPrivacyDisplaySummary - Privacy tiers with isUnlocked = true
+  const s9 = getPrivacyDisplaySummary("Secret info", "redacted", true);
+  if (s9 !== "Secret info") {
+    throw new Error(`Privacy Test 10 Failed: Expected 'Secret info', got '${s9}'`);
+  }
 }
