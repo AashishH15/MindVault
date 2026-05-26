@@ -441,15 +441,18 @@ async fn memory_extract_if_ready(
     // Drop connection explicitly before starting any await calls
     drop(conn);
 
-    // 5. Execute shared pipeline
-    let changeset =
-        execute_memory_extraction_pipeline(provider, endpoint, model, db_path.clone()).await?;
+    // 5. Execute shared pipeline (capture result without early-returning on error,
+    //    so we always mark the extraction as attempted and respect cooldown windows)
+    let pipeline_result =
+        execute_memory_extraction_pipeline(provider, endpoint, model, db_path.clone()).await;
 
-    // 6. Open connection synchronously to mark extraction complete
+    // 6. Mark extraction complete/attempted *before* propagating any error,
+    //    so that should_extract respects the 6-message and 2-minute cooldown
     let conn = open_connection(&db_path)?;
     memory_agent::trigger::mark_extraction_complete(&conn, current_message_count)?;
 
-    Ok(Some(changeset))
+    // 7. Now propagate the pipeline result
+    Ok(Some(pipeline_result?))
 }
 
 #[tauri::command]
