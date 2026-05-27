@@ -71,10 +71,20 @@ async fn save_markdown_file(default_name: String, content: String) -> IpcRespons
         .await;
 
     match path {
-        Some(handle) => match std::fs::write(handle.path(), &content) {
-            Ok(_) => IpcResponse::Ok { ok: true },
-            Err(e) => IpcResponse::Err { err: e.to_string() },
-        },
+        Some(handle) => {
+            let path_buf = handle.path().to_path_buf();
+            let write_res =
+                tauri::async_runtime::spawn_blocking(move || std::fs::write(path_buf, content))
+                    .await;
+
+            match write_res {
+                Ok(Ok(_)) => IpcResponse::Ok { ok: true },
+                Ok(Err(e)) => IpcResponse::Err { err: e.to_string() },
+                Err(join_err) => IpcResponse::Err {
+                    err: format!("Spawn blocking failed: {join_err}"),
+                },
+            }
+        }
         None => IpcResponse::Ok { ok: false },
     }
 }
