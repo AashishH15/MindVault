@@ -244,6 +244,33 @@ export default function NodeEditorExpanded({
       }
 
       setNode(nodeRes);
+
+      setEditTitle(nodeRes.title ?? "");
+      setEditSummary(nodeRes.summary ?? "");
+      setEditDetail(nodeRes.detail ?? "");
+      setDebouncedPreviewDetail(nodeRes.detail ?? "");
+      setEditPrivacy(nodeRes.privacyTier ?? "open");
+      try {
+        const parsed = nodeRes.priority
+          ? typeof nodeRes.priority === "string"
+            ? JSON.parse(nodeRes.priority)
+            : nodeRes.priority
+          : null;
+        setEditPriorityProfile(
+          parsed && typeof parsed === "object" && "profile" in parsed
+            ? String(parsed.profile)
+            : "standard"
+        );
+        setEditFrozen(
+          parsed && typeof parsed === "object" && "frozen" in parsed
+            ? parsed.frozen === true
+            : false
+        );
+      } catch {
+        setEditPriorityProfile("standard");
+        setEditFrozen(false);
+      }
+
       setVaults(vaultsRes);
       setAllNodes(allNodesRes);
 
@@ -286,34 +313,6 @@ export default function NodeEditorExpanded({
     }
     void loadTags();
   }, [tagRefreshKey]);
-
-  const [lastInitializedNodeId, setLastInitializedNodeId] = useState<string | null>(null);
-  if (node && node.id === nodeId && lastInitializedNodeId !== nodeId) {
-    setLastInitializedNodeId(nodeId);
-    setEditTitle(node.title ?? "");
-    setEditSummary(node.summary ?? "");
-    setEditDetail(node.detail ?? "");
-    setDebouncedPreviewDetail(node.detail ?? "");
-    setEditPrivacy(node.privacyTier ?? "open");
-    try {
-      const parsed = node.priority
-        ? typeof node.priority === "string"
-          ? JSON.parse(node.priority)
-          : node.priority
-        : null;
-      setEditPriorityProfile(
-        parsed && typeof parsed === "object" && "profile" in parsed
-          ? String(parsed.profile)
-          : "standard"
-      );
-      setEditFrozen(
-        parsed && typeof parsed === "object" && "frozen" in parsed ? parsed.frozen === true : false
-      );
-    } catch {
-      setEditPriorityProfile("standard");
-      setEditFrozen(false);
-    }
-  }
 
   // Decoupled preview generation: 250ms input state typing debounce
   useEffect(() => {

@@ -83,7 +83,6 @@ function NodeEditor({
   const [doorLabelInput, setDoorLabelInput] = useState("");
   const [repointDoorId, setRepointDoorId] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
-  const [lastInitializedNodeId, setLastInitializedNodeId] = useState<string | null>(null);
   const [editPriorityProfile, setEditPriorityProfile] = useState("standard");
   const [editFrozen, setEditFrozen] = useState(false);
   const [status, setStatus] = useState<string>("");
@@ -214,6 +213,8 @@ function NodeEditor({
         setDoorLabelInput("");
         setRepointDoorId(null);
         setSaveStatus("idle");
+        setEditPriorityProfile("standard");
+        setEditFrozen(false);
       }, 0);
       return () => clearTimeout(clearTimer);
     }
@@ -239,6 +240,32 @@ function NodeEditor({
         }
         setVaults(vaultsList);
         setNode(node);
+
+        setEditTitle(node.title ?? "");
+        setEditSummary(node.summary ?? "");
+        setEditDetail(node.detail ?? "");
+        setEditPrivacy(node.privacyTier ?? "open");
+        try {
+          const parsed = node.priority
+            ? typeof node.priority === "string"
+              ? JSON.parse(node.priority)
+              : node.priority
+            : null;
+          setEditPriorityProfile(
+            parsed && typeof parsed === "object" && "profile" in parsed
+              ? String(parsed.profile)
+              : "standard"
+          );
+          setEditFrozen(
+            parsed && typeof parsed === "object" && "frozen" in parsed
+              ? parsed.frozen === true
+              : false
+          );
+        } catch {
+          setEditPriorityProfile("standard");
+          setEditFrozen(false);
+        }
+
         if (tagsResult.error) {
           setStatus(tagsResult.error.message);
         } else {
@@ -334,40 +361,6 @@ function NodeEditor({
     const tier = getNodeEffectivePrivacy(nodeItem);
     const summary = nodeItem.summary.slice(0, maxLength);
     return getPrivacyDisplaySummary(summary, tier, isRedactedUnlocked);
-  }
-
-  if (node && node.id === selectedNodeId && lastInitializedNodeId !== selectedNodeId) {
-    setLastInitializedNodeId(selectedNodeId);
-    setEditTitle(node.title ?? "");
-    setEditSummary(node.summary ?? "");
-    setEditDetail(node.detail ?? "");
-    setEditPrivacy(node.privacyTier ?? "open");
-    try {
-      const parsed = node.priority
-        ? typeof node.priority === "string"
-          ? JSON.parse(node.priority)
-          : node.priority
-        : null;
-      setEditPriorityProfile(
-        parsed && typeof parsed === "object" && "profile" in parsed
-          ? String(parsed.profile)
-          : "standard"
-      );
-      setEditFrozen(
-        parsed && typeof parsed === "object" && "frozen" in parsed ? parsed.frozen === true : false
-      );
-    } catch {
-      setEditPriorityProfile("standard");
-      setEditFrozen(false);
-    }
-  } else if (!selectedNodeId && lastInitializedNodeId !== null) {
-    setLastInitializedNodeId(null);
-    setEditTitle("");
-    setEditSummary("");
-    setEditDetail("");
-    setEditPrivacy("open");
-    setEditPriorityProfile("standard");
-    setEditFrozen(false);
   }
 
   useEffect(
