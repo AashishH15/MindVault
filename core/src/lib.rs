@@ -228,12 +228,139 @@ pub async fn execute_memory_extraction_pipeline(
             raw_messages.push(r.map_err(|err| format!("Failed reading message row: {err}"))?);
         }
 
+        // Collect all unique node IDs referenced in the messages
+        let mut unique_node_ids = std::collections::HashSet::new();
+        for (_, _, _, node_refs_json, _) in &raw_messages {
+            let node_ids: Vec<String> = serde_json::from_str(node_refs_json).unwrap_or_default();
+            for id in node_ids {
+                if !id.trim().is_empty() {
+                    unique_node_ids.insert(id);
+                }
+            }
+        }
+
+        // Load all vaults/sub-vaults into a local cache map in a single query
+        let mut vault_map = std::collections::HashMap::new();
+        let mut vault_stmt = conn
+            .prepare(
+                "SELECT id, NULL AS parent_vault_id, privacy_tier FROM vaults WHERE deleted_at IS NULL
+                 UNION ALL
+                 SELECT id, vault_id AS parent_vault_id, COALESCE(privacy_tier, 'open') AS privacy_tier
+                 FROM sub_vaults WHERE deleted_at IS NULL;",
+            )
+            .map_err(|err| format!("Failed preparing vaults union query: {err}"))?;
+
+        let vault_rows = vault_stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(|err| format!("Failed querying vaults union: {err}"))?;
+
+        for r in vault_rows {
+            let (id, parent_id, tier) =
+                r.map_err(|err| format!("Failed reading vault row: {err}"))?;
+            vault_map.insert(id, (parent_id, tier));
+        }
+
+        // Resolves a vault effective privacy tier using the in-memory cache
+        let resolve_vault_privacy_in_memory =
+            |vault_id: &str,
+             map: &std::collections::HashMap<String, (Option<String>, String)>|
+             -> String {
+                let mut current_id = Some(vault_id.to_string());
+                let mut strictest = "open".to_string();
+                let mut depth = 0;
+                while let Some(id) = current_id {
+                    depth += 1;
+                    if depth > 100 {
+                        break;
+                    }
+                    if let Some((parent_id, tier)) = map.get(&id) {
+                        strictest = privacy::get_effective_privacy(
+                            Some(tier.as_str()),
+                            None,
+                            Some(strictest.as_str()),
+                        )
+                        .to_string();
+                        current_id = parent_id.clone();
+                    } else {
+                        break;
+                    }
+                }
+                strictest
+            };
+
+        // Query the privacy parameters of all unique referenced nodes in a single batched query
+        let mut private_nodes = std::collections::HashSet::new();
+        if !unique_node_ids.is_empty() {
+            let placeholders = vec!["?"; unique_node_ids.len()].join(", ");
+            let query_str = format!(
+                "SELECT n.id, n.vault_id, n.sub_vault_id, COALESCE(o.privacy_tier, n.privacy_tier)
+                 FROM nodes n
+                 LEFT JOIN privacy_overrides o ON n.id = o.node_id
+                 WHERE n.id IN ({placeholders}) AND n.deleted_at IS NULL;"
+            );
+
+            let mut node_stmt = conn
+                .prepare(&query_str)
+                .map_err(|err| format!("Failed preparing batched nodes privacy query: {err}"))?;
+
+            let unique_node_ids_vec: Vec<String> = unique_node_ids.into_iter().collect();
+            let params: Vec<&dyn rusqlite::ToSql> = unique_node_ids_vec
+                .iter()
+                .map(|id| id as &dyn rusqlite::ToSql)
+                .collect();
+
+            let mut node_rows = node_stmt
+                .query(rusqlite::params_from_iter(params))
+                .map_err(|err| format!("Failed querying batched nodes privacy: {err}"))?;
+
+            while let Some(row) = node_rows
+                .next()
+                .map_err(|err| format!("Failed reading batched node privacy row: {err}"))?
+            {
+                let id: String = row
+                    .get(0)
+                    .map_err(|err| format!("Failed decoding id: {err}"))?;
+                let vault_id: String = row
+                    .get(1)
+                    .map_err(|err| format!("Failed decoding vault_id: {err}"))?;
+                let sub_vault_id: Option<String> = row
+                    .get(2)
+                    .map_err(|err| format!("Failed decoding sub_vault_id: {err}"))?;
+                let node_privacy_tier: Option<String> = row
+                    .get(3)
+                    .map_err(|err| format!("Failed decoding node_privacy_tier: {err}"))?;
+
+                let container_tier = if let Some(ref sv_id) = sub_vault_id {
+                    resolve_vault_privacy_in_memory(sv_id, &vault_map)
+                } else {
+                    resolve_vault_privacy_in_memory(&vault_id, &vault_map)
+                };
+
+                let effective = privacy::get_effective_privacy(
+                    node_privacy_tier.as_deref(),
+                    None,
+                    Some(container_tier.as_str()),
+                );
+
+                if effective == "redacted" || effective == "locked" {
+                    private_nodes.insert(id);
+                }
+            }
+        }
+
+        // Filter messages in memory using the fast private-nodes HashSet lookup
         let mut filtered_history = Vec::new();
         for (id, role, content, node_refs_json, created_at) in raw_messages {
             let node_ids: Vec<String> = serde_json::from_str(&node_refs_json).unwrap_or_default();
             let mut has_private_ref = false;
             for node_id in &node_ids {
-                if is_node_private(&conn, node_id)? {
+                if private_nodes.contains(node_id) {
                     has_private_ref = true;
                     break;
                 }
