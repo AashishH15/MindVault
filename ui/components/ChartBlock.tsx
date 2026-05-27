@@ -253,8 +253,56 @@ export default function ChartBlock({ language, code }: ChartBlockProps) {
   // Sync state during render when code changes as recommended by React
   if (code !== prevCode) {
     setPrevCode(code);
-    setViewBoxX(domainX);
-    setViewBoxY(domainY);
+
+    const isHardChange =
+      Math.abs(code.length - prevCode.length) > 15 ||
+      !code.startsWith(prevCode.slice(0, Math.min(prevCode.length, 10)));
+
+    if (isHardChange) {
+      setDebouncedCode(code);
+
+      // Instantly parse the new domains during a hard switch to prevent layout jump or race condition mismatches
+      let newDomainX: [number, number] = [-5, 5];
+      let newDomainY: [number, number] = [-5, 5];
+      const extractDomains = (jsonStr: string) => {
+        try {
+          const jsonObj = JSON.parse(jsonStr);
+          if (jsonObj && typeof jsonObj === "object") {
+            const obj = jsonObj as Record<string, unknown>;
+            if (Array.isArray(obj.domainX) && obj.domainX.length === 2) {
+              newDomainX = [Number(obj.domainX[0]), Number(obj.domainX[1])];
+            }
+            if (Array.isArray(obj.domainY) && obj.domainY.length === 2) {
+              newDomainY = [Number(obj.domainY[0]), Number(obj.domainY[1])];
+            }
+          }
+        } catch {
+          // ignore
+        }
+      };
+
+      extractDomains(code);
+      if (
+        newDomainX[0] === -5 &&
+        newDomainX[1] === 5 &&
+        newDomainY[0] === -5 &&
+        newDomainY[1] === 5
+      ) {
+        // Fallback: Attempt parsing with jsonrepair
+        try {
+          const repaired = jsonrepair(code);
+          extractDomains(repaired);
+        } catch {
+          // ignore
+        }
+      }
+
+      setViewBoxX(newDomainX);
+      setViewBoxY(newDomainY);
+    } else {
+      setViewBoxX(domainX);
+      setViewBoxY(domainY);
+    }
   }
 
   // Fallback rendering structure (rendered exactly like MindVault's CodeBlock)
