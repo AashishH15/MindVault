@@ -335,10 +335,13 @@ export default function NodeEditorExpanded({
 
   // Sync Wikilink doors automatically after save
   const parseWikilinks = (text: string): string[] => {
+    if (!text) return [];
+    // Restrict input length to prevent CPU thread exhaustion / ReDoS on large text payloads
+    const safeText = text.length > 50000 ? text.slice(0, 50000) : text;
     const regex = /\[\[([^|\]\n]+)\|([^\]\n]+)\]\]/g;
     const ids: string[] = [];
     let m: RegExpExecArray | null;
-    while ((m = regex.exec(text)) !== null) {
+    while ((m = regex.exec(safeText)) !== null) {
       ids.push(m[2]);
     }
     return ids;

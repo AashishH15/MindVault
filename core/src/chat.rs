@@ -19,7 +19,10 @@ fn ensure_default_session(db: &Connection) -> Result<(), crate::AppError> {
         "INSERT OR IGNORE INTO sessions (id, scope_json) VALUES (?1, '[]');",
         params![DEFAULT_SESSION_ID],
     )
-    .map_err(|err| format!("Failed ensuring default chat session: {err}"))?;
+    .map_err(|err| {
+        eprintln!("Database error in ensure_default_session: {err}");
+        "Failed ensuring default chat session".to_string()
+    })?;
     Ok(())
 }
 
@@ -33,7 +36,10 @@ pub fn get_chat_history(db: &Connection) -> Result<Vec<ChatMessage>, crate::AppE
              WHERE session_id = ?1
              ORDER BY created_at ASC, id ASC;",
         )
-        .map_err(|err| format!("Failed preparing chat history query: {err}"))?;
+        .map_err(|err| {
+            eprintln!("Database error preparing chat history query: {err}");
+            "Failed preparing chat history query".to_string()
+        })?;
 
     let rows = statement
         .query_map(params![DEFAULT_SESSION_ID], |row| {
@@ -44,11 +50,17 @@ pub fn get_chat_history(db: &Connection) -> Result<Vec<ChatMessage>, crate::AppE
                 created_at: row.get(3)?,
             })
         })
-        .map_err(|err| format!("Failed querying chat history: {err}"))?;
+        .map_err(|err| {
+            eprintln!("Database error querying chat history: {err}");
+            "Failed querying chat history".to_string()
+        })?;
 
     let mut messages = Vec::new();
     for row in rows {
-        messages.push(row.map_err(|err| format!("Failed decoding chat history row: {err}"))?);
+        messages.push(row.map_err(|err| {
+            eprintln!("Database error decoding chat history row: {err}");
+            "Failed decoding chat history row".to_string()
+        })?);
     }
     Ok(messages)
 }
@@ -66,7 +78,10 @@ pub fn append_message(
          VALUES (?1, ?2, ?3, ?4);",
         params![id, DEFAULT_SESSION_ID, role, content],
     )
-    .map_err(|err| format!("Failed appending chat message: {err}"))?;
+    .map_err(|err| {
+        eprintln!("Database error appending chat message: {err}");
+        "Failed appending chat message".to_string()
+    })?;
 
     Ok(())
 }
@@ -78,7 +93,10 @@ pub fn clear_chat_history(db: &Connection) -> Result<(), crate::AppError> {
         "DELETE FROM session_messages WHERE session_id = ?1;",
         params![DEFAULT_SESSION_ID],
     )
-    .map_err(|err| format!("Failed clearing chat history: {err}"))?;
+    .map_err(|err| {
+        eprintln!("Database error clearing chat history: {err}");
+        "Failed clearing chat history".to_string()
+    })?;
 
     Ok(())
 }
@@ -95,11 +113,17 @@ pub fn edit_and_truncate(
         "UPDATE session_messages SET content = ?1 WHERE id = ?2;",
         params![new_content, edit_id],
     )
-    .map_err(|err| format!("Failed updating chat message: {err}"))?;
+    .map_err(|err| {
+        eprintln!("Database error updating chat message: {err}");
+        "Failed updating chat message".to_string()
+    })?;
 
     for id in delete_ids {
         db.execute("DELETE FROM session_messages WHERE id = ?1;", params![id])
-            .map_err(|err| format!("Failed deleting subsequent chat message {id}: {err}"))?;
+            .map_err(|err| {
+                eprintln!("Database error deleting subsequent chat message {id}: {err}");
+                "Failed deleting subsequent chat message".to_string()
+            })?;
     }
 
     Ok(())
