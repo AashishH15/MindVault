@@ -109,32 +109,64 @@ pub fn edit_and_truncate(
 ) -> Result<(), crate::AppError> {
     ensure_default_session(db)?;
 
-    db.execute(
-        "UPDATE session_messages SET content = ?1 WHERE id = ?2;",
-        params![new_content, edit_id],
-    )
-    .map_err(|err| {
-        eprintln!("Database error updating chat message: {err}");
-        "Failed updating chat message".to_string()
-    })?;
-
-    if !delete_ids.is_empty() {
-        let placeholders = vec!["?"; delete_ids.len()].join(", ");
-        let query_str = format!("DELETE FROM session_messages WHERE id IN ({placeholders});");
-        let mut stmt = db.prepare(&query_str).map_err(|err| {
-            eprintln!("Database error preparing delete query: {err}");
-            "Failed preparing delete query".to_string()
+    // Wrap in a savepoint to ensure absolute atomicity across updates and batch deletes
+    db.execute("SAVEPOINT edit_and_truncate_sp;", [])
+        .map_err(|err| {
+            eprintln!("Database error starting edit_and_truncate savepoint: {err}");
+            "Failed starting chat message truncation".to_string()
         })?;
-        let params: Vec<&dyn rusqlite::ToSql> = delete_ids
-            .iter()
-            .map(|id| id as &dyn rusqlite::ToSql)
-            .collect();
-        stmt.execute(rusqlite::params_from_iter(params))
-            .map_err(|err| {
-                eprintln!("Database error deleting subsequent chat messages: {err}");
-                "Failed deleting subsequent chat messages".to_string()
-            })?;
-    }
 
-    Ok(())
+    let run_ops = || -> Result<(), crate::AppError> {
+        db.execute(
+            "UPDATE session_messages SET content = ?1 WHERE session_id = ?2 AND id = ?3;",
+            params![new_content, DEFAULT_SESSION_ID, edit_id],
+        )
+        .map_err(|err| {
+            eprintln!("Database error updating chat message: {err}");
+            "Failed updating chat message".to_string()
+        })?;
+
+        if !delete_ids.is_empty() {
+            let placeholders = vec!["?"; delete_ids.len()].join(", ");
+            let query_str = format!(
+                "DELETE FROM session_messages WHERE session_id = ?1 AND id IN ({placeholders});"
+            );
+            let mut stmt = db.prepare(&query_str).map_err(|err| {
+                eprintln!("Database error preparing delete query: {err}");
+                "Failed preparing delete query".to_string()
+            })?;
+
+            let mut params: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(delete_ids.len() + 1);
+            params.push(&DEFAULT_SESSION_ID as &dyn rusqlite::ToSql);
+            for id in &delete_ids {
+                params.push(id as &dyn rusqlite::ToSql);
+            }
+
+            stmt.execute(rusqlite::params_from_iter(params))
+                .map_err(|err| {
+                    eprintln!("Database error deleting subsequent chat messages: {err}");
+                    "Failed deleting subsequent chat messages".to_string()
+                })?;
+        }
+        Ok(())
+    };
+
+    match run_ops() {
+        Ok(()) => {
+            db.execute("RELEASE edit_and_truncate_sp;", [])
+                .map_err(|err| {
+                    eprintln!("Database error releasing edit_and_truncate savepoint: {err}");
+                    "Failed committing chat truncation".to_string()
+                })?;
+            Ok(())
+        }
+        Err(err) => {
+            if let Err(rollback_err) = db.execute("ROLLBACK TO edit_and_truncate_sp;", []) {
+                eprintln!(
+                    "Database error during edit_and_truncate savepoint rollback: {rollback_err}"
+                );
+            }
+            Err(err)
+        }
+    }
 }
