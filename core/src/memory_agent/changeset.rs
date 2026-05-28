@@ -5,7 +5,19 @@ use crate::memory_agent::similarity::{
 };
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::sync::{OnceLock, RwLock};
+
+struct CachedTokenizedNode {
+    version: i32,
+    tokens: HashSet<String>,
+}
+
+static TOKENIZATION_CACHE: OnceLock<RwLock<HashMap<String, CachedTokenizedNode>>> = OnceLock::new();
+
+fn get_tokenization_cache() -> &'static RwLock<HashMap<String, CachedTokenizedNode>> {
+    TOKENIZATION_CACHE.get_or_init(|| RwLock::new(HashMap::new()))
+}
 
 /// The type of action proposed by an individual item in a changeset.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -84,6 +96,7 @@ struct DbNode {
     title: String,
     summary: String,
     node_type: String,
+    version: i32,
 }
 
 fn fetch_node_detail(conn: &Connection, node_id: &str) -> Result<Option<String>, String> {
@@ -102,31 +115,127 @@ pub fn build_changeset(
     candidates: &[CandidateNode],
     session_id: &str,
 ) -> Result<PendingChangeset, String> {
-    let mut stmt = conn
-        .prepare(
-            "SELECT id, vault_id, title, summary, node_type
-             FROM nodes
-             WHERE deleted_at IS NULL AND is_archived = 0;",
+    // 1. Resolve active vault ID from session
+    let active_vault_id: Option<String> = conn
+        .query_row(
+            "SELECT vault_id FROM sessions WHERE id = ?1 LIMIT 1;",
+            [session_id],
+            |row| row.get(0),
         )
+        .ok()
+        .flatten();
+
+    // 2. Collect all relevant vaults (session vault + sub-vaults + candidate target vaults + default root)
+    let mut relevant_vaults = HashSet::new();
+    let mut has_context = false;
+
+    if let Some(ref vault_id) = active_vault_id {
+        has_context = true;
+        relevant_vaults.insert(vault_id.clone());
+        relevant_vaults.insert("vault_root_graph".to_string());
+
+        if let Ok(mut stmt) =
+            conn.prepare("SELECT id FROM sub_vaults WHERE vault_id = ?1 AND deleted_at IS NULL;")
+        {
+            if let Ok(mut rows) = stmt.query([vault_id]) {
+                while let Ok(Some(row)) = rows.next() {
+                    if let Ok(sv_id) = row.get::<_, String>(0) {
+                        relevant_vaults.insert(sv_id);
+                    }
+                }
+            }
+        }
+    }
+
+    for candidate in candidates {
+        if let Some(ref key) = candidate.target_vault_key {
+            if let Some(resolved) = crate::onboarding::vault_id_for_category_key(key) {
+                has_context = true;
+                relevant_vaults.insert(resolved.to_string());
+                relevant_vaults.insert("vault_root_graph".to_string());
+            }
+        }
+    }
+
+    // 3. Construct parameterized query to only fetch nodes in the relevant vaults
+    let (query_str, params) = if !has_context {
+        (
+            "SELECT id, vault_id, title, summary, node_type, version
+             FROM nodes
+             WHERE deleted_at IS NULL AND is_archived = 0;"
+                .to_string(),
+            Vec::new(),
+        )
+    } else {
+        let placeholders = vec!["?"; relevant_vaults.len()].join(", ");
+        let query = format!(
+            "SELECT id, vault_id, title, summary, node_type, version
+             FROM nodes
+             WHERE deleted_at IS NULL AND is_archived = 0 AND vault_id IN ({placeholders});"
+        );
+        let params_vec: Vec<String> = relevant_vaults.into_iter().collect();
+        (query, params_vec)
+    };
+
+    let mut stmt = conn
+        .prepare(&query_str)
         .map_err(|err| format!("Failed to prepare nodes query: {err}"))?;
 
+    let params_refs: Vec<&dyn rusqlite::ToSql> =
+        params.iter().map(|v| v as &dyn rusqlite::ToSql).collect();
+
     let node_rows = stmt
-        .query_map([], |row| {
+        .query_map(rusqlite::params_from_iter(params_refs), |row| {
             Ok(DbNode {
                 id: row.get(0)?,
                 vault_id: row.get(1)?,
                 title: row.get(2)?,
                 summary: row.get(3)?,
                 node_type: row.get(4)?,
+                version: row.get(5)?,
             })
         })
         .map_err(|err| format!("Failed to execute nodes query: {err}"))?;
 
     // Pre-tokenize existing nodes once (N tokenizations) to avoid re-tokenizing
     let mut existing_nodes: Vec<(DbNode, HashSet<String>)> = Vec::new();
+    let cache = get_tokenization_cache();
+
     for row_res in node_rows {
         let node = row_res.map_err(|err| format!("Failed to parse database node: {err}"))?;
-        let tokens = tokenize(&format!("{} {}", node.title, node.summary));
+
+        let cached_tokens = {
+            if let Ok(read_guard) = cache.read() {
+                if let Some(cached) = read_guard.get(&node.id) {
+                    if cached.version == node.version {
+                        Some(cached.tokens.clone())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        };
+
+        let tokens = if let Some(t) = cached_tokens {
+            t
+        } else {
+            let t = tokenize(&format!("{} {}", node.title, node.summary));
+            if let Ok(mut write_guard) = cache.write() {
+                write_guard.insert(
+                    node.id.clone(),
+                    CachedTokenizedNode {
+                        version: node.version,
+                        tokens: t.clone(),
+                    },
+                );
+            }
+            t
+        };
+
         existing_nodes.push((node, tokens));
     }
 
@@ -389,6 +498,7 @@ pub fn build_changeset(
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use rusqlite::params;
@@ -399,6 +509,18 @@ mod tests {
             Err(e) => panic!("Failed to open in-memory DB: {e}"),
         };
         let create_sql = "
+            CREATE TABLE vaults (
+                id TEXT PRIMARY KEY
+            );
+            CREATE TABLE sub_vaults (
+                id TEXT PRIMARY KEY,
+                vault_id TEXT,
+                deleted_at TEXT
+            );
+            CREATE TABLE sessions (
+                id TEXT PRIMARY KEY,
+                vault_id TEXT
+            );
             CREATE TABLE nodes (
                 id TEXT PRIMARY KEY,
                 vault_id TEXT NOT NULL,
@@ -406,12 +528,13 @@ mod tests {
                 title TEXT NOT NULL,
                 summary TEXT NOT NULL,
                 detail TEXT,
+                version INTEGER NOT NULL DEFAULT 1,
                 is_archived INTEGER NOT NULL DEFAULT 0,
                 deleted_at TEXT
             );
         ";
-        if let Err(e) = conn.execute(create_sql, []) {
-            panic!("Failed to create nodes table: {e}");
+        if let Err(e) = conn.execute_batch(create_sql) {
+            panic!("Failed to create test database: {e}");
         }
         conn
     }
@@ -703,5 +826,215 @@ mod tests {
 
         // Both skipped/discarded, items should be empty!
         assert!(changeset.items.is_empty());
+    }
+
+    #[test]
+    fn test_active_vault_filtering() {
+        let conn = setup_test_db();
+
+        // 1. Set up vaults, sessions, and subvaults
+        conn.execute("INSERT INTO vaults (id) VALUES ('vault_learning');", [])
+            .unwrap();
+        conn.execute("INSERT INTO vaults (id) VALUES ('vault_personal');", [])
+            .unwrap();
+        conn.execute(
+            "INSERT INTO sub_vaults (id, vault_id) VALUES ('sub_1', 'vault_learning');",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO sessions (id, vault_id) VALUES ('session_1', 'vault_learning');",
+            [],
+        )
+        .unwrap();
+
+        // 2. Insert standard nodes across different vaults
+        let insert_sql = "
+            INSERT INTO nodes (id, vault_id, node_type, title, summary, detail, version)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7);
+        ";
+
+        // Node in session vault (should match)
+        conn.execute(
+            insert_sql,
+            params![
+                "node_learning",
+                "vault_learning",
+                "concept",
+                "Rust programming",
+                "Systems language",
+                None::<String>,
+                1
+            ],
+        )
+        .unwrap();
+
+        // Node in sub-vault (should match)
+        conn.execute(
+            insert_sql,
+            params![
+                "node_sub",
+                "sub_1",
+                "concept",
+                "Tokio async",
+                "Tokio runtime",
+                None::<String>,
+                1
+            ],
+        )
+        .unwrap();
+
+        // Node in default root vault (should match)
+        conn.execute(
+            insert_sql,
+            params![
+                "node_root",
+                "vault_root_graph",
+                "concept",
+                "General graph",
+                "Root logic",
+                None::<String>,
+                1
+            ],
+        )
+        .unwrap();
+
+        // Node in personal vault (not in active session context, should NOT match)
+        conn.execute(
+            insert_sql,
+            params![
+                "node_personal",
+                "vault_personal",
+                "concept",
+                "Personal hobbies",
+                "Cooking recipe",
+                None::<String>,
+                1
+            ],
+        )
+        .unwrap();
+
+        // 3. Test matching for a candidate resembling node_learning
+        let candidates = vec![CandidateNode {
+            title: "Rust programming".to_string(),
+            summary: "Systems language".to_string(),
+            detail: None,
+            node_type: Some("concept".to_string()),
+            target_vault_key: None,
+            tags: None,
+            confidence: 0.90,
+            action: CandidateAction::Add,
+        }];
+
+        // It should match since node_learning is in the active session vault
+        let cs = build_changeset(&conn, &candidates, "session_1").unwrap();
+        assert_eq!(cs.items.len(), 1);
+        assert_eq!(cs.items[0].item_type, ChangesetItemType::Update);
+        assert_eq!(
+            cs.items[0].target_node_id,
+            Some("node_learning".to_string())
+        );
+
+        // 4. Test matching for a candidate resembling node_personal (out of context)
+        let candidates_personal = vec![CandidateNode {
+            title: "Personal hobbies".to_string(),
+            summary: "Cooking recipe".to_string(),
+            detail: None,
+            node_type: Some("concept".to_string()),
+            target_vault_key: None,
+            tags: None,
+            confidence: 0.90,
+            action: CandidateAction::Add,
+        }];
+
+        // Since node_personal is in vault_personal (out of context), it should NOT match, and instead be proposed as an ADD
+        let cs_p = build_changeset(&conn, &candidates_personal, "session_1").unwrap();
+        assert_eq!(cs_p.items.len(), 1);
+        assert_eq!(cs_p.items[0].item_type, ChangesetItemType::Add);
+        assert_eq!(cs_p.items[0].target_node_id, None);
+    }
+
+    #[test]
+    fn test_tokenization_cache() {
+        let conn = setup_test_db();
+
+        let insert_sql = "
+            INSERT INTO nodes (id, vault_id, node_type, title, summary, detail, version)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7);
+        ";
+
+        conn.execute(
+            insert_sql,
+            params![
+                "node_cache_test",
+                "vault_root_graph",
+                "concept",
+                "UniqueTitle",
+                "Simple Description",
+                None::<String>,
+                1
+            ],
+        )
+        .unwrap();
+
+        let candidates = vec![CandidateNode {
+            title: "UniqueTitle".to_string(),
+            summary: "Simple Description".to_string(),
+            detail: None,
+            node_type: Some("concept".to_string()),
+            target_vault_key: None,
+            tags: None,
+            confidence: 0.90,
+            action: CandidateAction::Add,
+        }];
+
+        // Run changeset build once, which should populate the cache
+        let cs = build_changeset(&conn, &candidates, "session_1").unwrap();
+        assert_eq!(cs.items.len(), 1);
+        assert_eq!(cs.items[0].item_type, ChangesetItemType::Update);
+
+        // Verify the node is now cached in memory
+        {
+            let cache = get_tokenization_cache();
+            let read_guard = cache.read().unwrap();
+            let cached = read_guard.get("node_cache_test").unwrap();
+            assert_eq!(cached.version, 1);
+            assert!(cached.tokens.contains("uniquetitle"));
+            assert!(cached.tokens.contains("description"));
+        }
+
+        // Update the version and content in the database
+        conn.execute(
+            "UPDATE nodes SET title = 'NewTitle', version = 2 WHERE id = 'node_cache_test';",
+            [],
+        )
+        .unwrap();
+
+        // Run changeset build again, which should invalidate and update the cache
+        let candidates_new = vec![CandidateNode {
+            title: "NewTitle".to_string(),
+            summary: "Simple Description".to_string(),
+            detail: None,
+            node_type: Some("concept".to_string()),
+            target_vault_key: None,
+            tags: None,
+            confidence: 0.90,
+            action: CandidateAction::Add,
+        }];
+
+        let cs2 = build_changeset(&conn, &candidates_new, "session_1").unwrap();
+        assert_eq!(cs2.items.len(), 1);
+        assert_eq!(cs2.items[0].item_type, ChangesetItemType::Update);
+
+        // Verify the cache has been updated to version 2 with the new tokens
+        {
+            let cache = get_tokenization_cache();
+            let read_guard = cache.read().unwrap();
+            let cached = read_guard.get("node_cache_test").unwrap();
+            assert_eq!(cached.version, 2);
+            assert!(cached.tokens.contains("newtitle"));
+            assert!(cached.tokens.contains("description"));
+            assert!(!cached.tokens.contains("uniquetitle")); // old unique word should be gone
+        }
     }
 }
