@@ -55,7 +55,9 @@ export async function deleteNode(nodeId: string): Promise<boolean> {
 }
 
 export async function touchNode(nodeId: string): Promise<boolean> {
-  return unwrapIpcResult(nodeTouch(nodeId));
+  const result = await unwrapIpcResult(nodeTouch(nodeId));
+  clearNodesCache();
+  return result;
 }
 
 export async function refreshAllPriorityScores(): Promise<number> {
@@ -86,7 +88,7 @@ export async function chatWithScope(
   chartsEnabled: boolean,
   isRedactedUnlocked: boolean
 ): Promise<string> {
-  return unwrapIpcResult(
+  const result = await unwrapIpcResult(
     chatWithLlm(
       nodeIds,
       scope,
@@ -98,6 +100,8 @@ export async function chatWithScope(
       isRedactedUnlocked
     )
   );
+  clearNodesCache();
+  return result;
 }
 
 export async function searchNodes(query: string): Promise<Node[]> {

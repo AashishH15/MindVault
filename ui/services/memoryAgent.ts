@@ -7,6 +7,7 @@ import {
   changesetListItems,
   type ChangesetItem,
 } from "../ipc";
+import { clearNodesCache } from "./nodes";
 import { unwrapIpcResult } from "./ipcResult";
 
 /**
@@ -17,7 +18,9 @@ export async function extractMemory(
   endpoint: string,
   model: string
 ): Promise<Changeset> {
-  return unwrapIpcResult(memoryExtract(provider, endpoint, model));
+  const result = await unwrapIpcResult(memoryExtract(provider, endpoint, model));
+  clearNodesCache();
+  return result;
 }
 
 /**
@@ -28,7 +31,11 @@ export async function extractMemoryIfReady(
   endpoint: string,
   model: string
 ): Promise<Changeset | null> {
-  return unwrapIpcResult(memoryExtractIfReady(provider, endpoint, model));
+  const result = await unwrapIpcResult(memoryExtractIfReady(provider, endpoint, model));
+  if (result) {
+    clearNodesCache();
+  }
+  return result;
 }
 
 /**
