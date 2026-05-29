@@ -531,8 +531,8 @@ function App() {
                       onNodeCreated={onNodeCreated}
                       onVaultCreated={onVaultCreated}
                       onBack={() => {
-                        setSelectedVaultId(null);
-                        setSelectedNodeId(null);
+                        onSelectVault(null);
+                        setLeftPanePinned(true);
                       }}
                       refreshKey={nodeRefreshKey}
                       isRedactedUnlocked={isRedactedUnlocked}
