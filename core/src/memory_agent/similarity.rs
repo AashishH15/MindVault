@@ -283,6 +283,11 @@ mod tests {
     }
 
     #[test]
+    fn test_stopwords_remain_sorted_for_binary_search() {
+        assert!(STOPWORDS.windows(2).all(|window| window[0] <= window[1]));
+    }
+
+    #[test]
     fn test_classification_buckets() {
         assert_eq!(classify_similarity(0.90), SimilarityClass::Update);
         assert_eq!(classify_similarity(0.85), SimilarityClass::DuplicateFlag);
