@@ -59,10 +59,11 @@ export default function NodeEditorDetail({
 
   useEffect(() => {
     /* eslint-disable react-hooks/set-state-in-effect */
-    setLocalValue(value);
-    setDebouncedPreviewValue(value);
+    if (value !== localValue) {
+      setLocalValue(value);
+    }
     /* eslint-enable react-hooks/set-state-in-effect */
-  }, [value]);
+  }, [value, localValue]);
 
   // Debounce the heavy markdown preview translation to prevent visual input lags while typing
   useEffect(() => {
