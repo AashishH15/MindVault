@@ -32,8 +32,8 @@ export function preprocessExpression(expr: string): string {
   cleaned = cleaned.replace(/(\d)(?=[a-zA-Z])/g, "$1*");
   // 2. Digit followed by open parenthesis (e.g. 2(x) -> 2*(x))
   cleaned = cleaned.replace(/(\d)(?=\()/g, "$1*");
-  // 3. Variable 'x' followed by open parenthesis (e.g. x(x+1) -> x*(x+1))
-  cleaned = cleaned.replace(/(x)(?=\()/g, "$1*");
+  // 3. Supported constants/variable followed by open parenthesis (e.g. e(x), pi(x), x(x+1))
+  cleaned = cleaned.replace(/(x|pi|e)(?=\()/g, "$1*");
   // 4. Closing parenthesis followed by open parenthesis (e.g. (x)(y) -> (x)*(y))
   cleaned = cleaned.replace(/\)(?=\()/g, ")*");
   // 5. Closing parenthesis followed by letter/variable (e.g. (x)x -> (x)*x)
