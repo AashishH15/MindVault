@@ -24,20 +24,22 @@ const functions = new Set(["sin", "cos", "tan", "sqrt", "abs", "exp", "log", "ln
  * Normalizes and preprocesses implicit multiplications (e.g., "2x" -> "2*x").
  */
 export function preprocessExpression(expr: string): string {
-  // Normalize whitespaces and lowercase
-  let cleaned = expr.replace(/\s+/g, "").toLowerCase();
+  // Normalize to lowercase, but preserve whitespaces for tokenization and word boundaries
+  let cleaned = expr.toLowerCase();
 
   // Handle implicit multiplication:
-  // 1. Digit followed by letter/variable (e.g. 2x -> 2*x)
-  cleaned = cleaned.replace(/(\d)(?=[a-zA-Z])/g, "$1*");
-  // 2. Digit followed by open parenthesis (e.g. 2(x) -> 2*(x))
-  cleaned = cleaned.replace(/(\d)(?=\()/g, "$1*");
-  // 3. Supported constants/variable followed by open parenthesis (e.g. e(x), pi(x), x(x+1))
-  cleaned = cleaned.replace(/(x|pi|e)(?=\()/g, "$1*");
-  // 4. Closing parenthesis followed by open parenthesis (e.g. (x)(y) -> (x)*(y))
-  cleaned = cleaned.replace(/\)(?=\()/g, ")*");
-  // 5. Closing parenthesis followed by letter/variable (e.g. (x)x -> (x)*x)
-  cleaned = cleaned.replace(/\)(?=[a-zA-Z])/g, ")*");
+  // 1. Digit followed by letter/variable/function (e.g. "2x" -> "2*x", "2 sin" -> "2*sin")
+  cleaned = cleaned.replace(/(\d)\s*(?=[a-zA-Z])/g, "$1*");
+  // 2. Digit followed by open parenthesis (e.g. "2(x)" -> "2*(x)", "2  (x)" -> "2*(x)")
+  cleaned = cleaned.replace(/(\d)\s*(?=\()/g, "$1*");
+  // 3. Supported constants/variable followed by open parenthesis (e.g. "x(y)" -> "x*(y)", "pi  (x)" -> "pi*(x)")
+  cleaned = cleaned.replace(/\b(x|pi|e)\b\s*(?=\()/g, "$1*");
+  // 4. Supported constants/variable followed by adjacent variable/constant/function (e.g. "x sin(x)" -> "x*sin(x)", "pi cos(x)" -> "pi*cos(x)", "e x" -> "e*x")
+  cleaned = cleaned.replace(/\b(x|pi|e)\b\s+(?=[a-zA-Z0-9])/g, "$1*");
+  // 5. Closing parenthesis followed by open parenthesis (e.g. "(x)(y)" -> "(x)*(y)", "(x) (y)" -> "(x)*(y)")
+  cleaned = cleaned.replace(/\)\s*(?=\()/g, ")*");
+  // 6. Closing parenthesis followed by letter/variable/function/number (e.g. "(x)x" -> "(x)*x", "(x) 2" -> "(x)*2", "(x) sin(x)" -> "(x)*sin(x)")
+  cleaned = cleaned.replace(/\)\s*(?=[a-zA-Z0-9])/g, ")*");
 
   return cleaned;
 }

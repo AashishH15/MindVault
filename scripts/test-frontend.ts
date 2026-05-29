@@ -47,6 +47,7 @@ import {
   setPlantUmlServer,
 } from "../ui/utils/settings.ts";
 import type { Node, Vault } from "../ui/ipc.ts";
+import { evaluateExpression, preprocessExpression } from "../ui/utils/mathParser.ts";
 
 function runDoorServiceTests() {
   const assertAppError = (val: unknown, expectedMessage: string, testName: string) => {
@@ -532,6 +533,50 @@ function runWikiLinksTests() {
   }
 }
 
+function runMathParserTests() {
+  // Test 1: Standard expressions
+  const res1 = preprocessExpression("2x");
+  if (res1 !== "2*x") {
+    throw new Error(`MathParser Preprocess Test 1 Failed: Expected '2*x', got '${res1}'`);
+  }
+
+  // Test 2: Adjacent variables/constants separated by spaces
+  const res2 = preprocessExpression("x sin(x)");
+  if (res2 !== "x*sin(x)") {
+    throw new Error(`MathParser Preprocess Test 2 Failed: Expected 'x*sin(x)', got '${res2}'`);
+  }
+
+  // Test 3: Constants separated by spaces
+  const res3 = preprocessExpression("pi cos(x)");
+  if (res3 !== "pi*cos(x)") {
+    throw new Error(`MathParser Preprocess Test 3 Failed: Expected 'pi*cos(x)', got '${res3}'`);
+  }
+
+  // Test 4: Nested parentheses adjacent to each other
+  const res4 = preprocessExpression("(x) (y)");
+  if (res4 !== "(x)*(y)") {
+    throw new Error(`MathParser Preprocess Test 4 Failed: Expected '(x)*(y)', got '${res4}'`);
+  }
+
+  // Test 5: Standard evaluation round-trip
+  const val1 = evaluateExpression("x sin(x)", 0);
+  if (Math.abs(val1 - 0) > 1e-9) {
+    throw new Error(`MathParser Evaluation Test 5 Failed: Expected 0, got '${val1}'`);
+  }
+
+  // Test 6: Implicit multiplication evaluation
+  const val2 = evaluateExpression("2 x", 5);
+  if (val2 !== 10) {
+    throw new Error(`MathParser Evaluation Test 6 Failed: Expected 10, got '${val2}'`);
+  }
+
+  // Test 7: Parenthesis implicit multiplication evaluation
+  const val3 = evaluateExpression("x(x + 1)", 3);
+  if (val3 !== 12) {
+    throw new Error(`MathParser Evaluation Test 7 Failed: Expected 12, got '${val3}'`);
+  }
+}
+
 try {
   runPrivacyTests();
   console.log("✓ All frontend privacy utility tests passed successfully!");
@@ -549,6 +594,8 @@ try {
   console.log("✓ All wikilink preprocessor utility tests passed successfully!");
   runSettingsTests();
   console.log("✓ All settings utility tests passed successfully!");
+  runMathParserTests();
+  console.log("✓ All mathematical expression parser utility tests passed successfully!");
   process.exit(0);
 } catch (err) {
   console.error("Frontend utility self-test failed:", err);
