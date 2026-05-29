@@ -666,6 +666,37 @@ function runMarkdownUtilsTests() {
   }
 }
 
+function runWikiLinkDecodedIdTests() {
+  function extractAndDecodeNodeId(href: string): string {
+    const nodeId =
+      href
+        .split(/#node\/|mindvault:\/\/node\//)
+        .pop()
+        ?.split(/[?#]/)[0] || "";
+    return decodeURIComponent(nodeId);
+  }
+
+  // Test 1: Standard clean ID
+  const id1 = extractAndDecodeNodeId("#node/node-123");
+  if (id1 !== "node-123") {
+    throw new Error(`WikiLinkDecodedId Test 1 Failed: Expected 'node-123', got '${id1}'`);
+  }
+
+  // Test 2: URL-encoded spaces and special characters
+  const id2 = extractAndDecodeNodeId("mindvault://node/my%20special%20node%2Fabc");
+  if (id2 !== "my special node/abc") {
+    throw new Error(
+      `WikiLinkDecodedId Test 2 Failed: Expected 'my special node/abc', got '${id2}'`
+    );
+  }
+
+  // Test 3: URL-encoded accented characters
+  const id3 = extractAndDecodeNodeId("#node/%C3%A9tudiant");
+  if (id3 !== "étudiant") {
+    throw new Error(`WikiLinkDecodedId Test 3 Failed: Expected 'étudiant', got '${id3}'`);
+  }
+}
+
 try {
   runPrivacyTests();
   console.log("✓ All frontend privacy utility tests passed successfully!");
@@ -689,6 +720,8 @@ try {
   console.log("✓ All LaTeX block unescaped character utility tests passed successfully!");
   runMarkdownUtilsTests();
   console.log("✓ All Markdown/math delimiters preprocessor utility tests passed successfully!");
+  runWikiLinkDecodedIdTests();
+  console.log("✓ All wikilink node ID decoding utility tests passed successfully!");
   process.exit(0);
 } catch (err) {
   console.error("Frontend utility self-test failed:", err);

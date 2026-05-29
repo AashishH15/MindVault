@@ -212,7 +212,7 @@ export function createMarkdownComponents(
                       console.error("Failed to load node service for wikilink:", err)
                     );
                 } else {
-                  onSelectNode(nodeId);
+                  onSelectNode(decodedNodeId);
                 }
               }
             }}
