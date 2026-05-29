@@ -134,16 +134,20 @@ pub fn build_changeset(
         relevant_vaults.insert(vault_id.clone());
         relevant_vaults.insert("vault_root_graph".to_string());
 
-        if let Ok(mut stmt) =
-            conn.prepare("SELECT id FROM sub_vaults WHERE vault_id = ?1 AND deleted_at IS NULL;")
+        let mut stmt = conn
+            .prepare("SELECT id FROM sub_vaults WHERE vault_id = ?1 AND deleted_at IS NULL;")
+            .map_err(|err| format!("Failed to prepare sub-vaults query: {err}"))?;
+        let mut rows = stmt
+            .query([vault_id])
+            .map_err(|err| format!("Failed to execute sub-vaults query: {err}"))?;
+        while let Some(row) = rows
+            .next()
+            .map_err(|err| format!("Failed to read next sub-vault: {err}"))?
         {
-            if let Ok(mut rows) = stmt.query([vault_id]) {
-                while let Ok(Some(row)) = rows.next() {
-                    if let Ok(sv_id) = row.get::<_, String>(0) {
-                        relevant_vaults.insert(sv_id);
-                    }
-                }
-            }
+            let sv_id: String = row
+                .get(0)
+                .map_err(|err| format!("Failed to decode sub-vault id field: {err}"))?;
+            relevant_vaults.insert(sv_id);
         }
     }
 
