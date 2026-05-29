@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
   TbClipboard,
   TbClipboardCheck,
@@ -1093,67 +1093,73 @@ export default function LatexBlock({ code }: LatexBlockProps) {
   const [copied, setCopied] = useState(false);
   const printContainerRef = useRef<HTMLDivElement>(null);
 
-  const cleanCode = stripLaTeXComments(code);
+  const parsedData = useMemo(() => {
+    const cleanCode = stripLaTeXComments(code);
 
-  // Extract Metadata
-  const title = extractMacroArg(cleanCode, "\\title");
-  const author = extractMacroArg(cleanCode, "\\author");
-  const date = extractMacroArg(cleanCode, "\\date");
-  const abstract = extractEnvironment(cleanCode, "abstract");
-  const keywords =
-    extractEnvironment(cleanCode, "IEEEkeywords") || extractEnvironment(cleanCode, "keywords");
+    // Extract Metadata
+    const title = extractMacroArg(cleanCode, "\\title");
+    const author = extractMacroArg(cleanCode, "\\author");
+    const date = extractMacroArg(cleanCode, "\\date");
+    const abstract = extractEnvironment(cleanCode, "abstract");
+    const keywords =
+      extractEnvironment(cleanCode, "IEEEkeywords") || extractEnvironment(cleanCode, "keywords");
 
-  // Clean the body code from metadata and abstract/keywords blocks to prevent duplicates in body view
-  let bodyCode = cleanCode;
+    // Clean the body code from metadata and abstract/keywords blocks to prevent duplicates in body view
+    let bodyCode = cleanCode;
 
-  // Extract content between \begin{document} and \end{document} to fully strip the LaTeX preamble
-  const beginDocIdx = bodyCode.indexOf("\\begin{document}");
-  if (beginDocIdx !== -1) {
-    const endDocIdx = bodyCode.indexOf("\\end{document}");
-    if (endDocIdx !== -1 && endDocIdx > beginDocIdx) {
-      bodyCode = bodyCode.substring(beginDocIdx + "\\begin{document}".length, endDocIdx).trim();
-    } else {
-      bodyCode = bodyCode.substring(beginDocIdx + "\\begin{document}".length).trim();
+    // Extract content between \begin{document} and \end{document} to fully strip the LaTeX preamble
+    const beginDocIdx = bodyCode.indexOf("\\begin{document}");
+    if (beginDocIdx !== -1) {
+      const endDocIdx = bodyCode.indexOf("\\end{document}");
+      if (endDocIdx !== -1 && endDocIdx > beginDocIdx) {
+        bodyCode = bodyCode.substring(beginDocIdx + "\\begin{document}".length, endDocIdx).trim();
+      } else {
+        bodyCode = bodyCode.substring(beginDocIdx + "\\begin{document}".length).trim();
+      }
     }
-  }
 
-  bodyCode = stripMacro(bodyCode, "\\title");
-  bodyCode = stripMacro(bodyCode, "\\author");
-  bodyCode = stripMacro(bodyCode, "\\date");
-  bodyCode = stripMacro(bodyCode, "\\markboth");
-  bodyCode = stripEnvironment(bodyCode, "abstract");
-  bodyCode = stripEnvironment(bodyCode, "IEEEkeywords");
-  bodyCode = stripEnvironment(bodyCode, "keywords");
+    bodyCode = stripMacro(bodyCode, "\\title");
+    bodyCode = stripMacro(bodyCode, "\\author");
+    bodyCode = stripMacro(bodyCode, "\\date");
+    bodyCode = stripMacro(bodyCode, "\\markboth");
+    bodyCode = stripEnvironment(bodyCode, "abstract");
+    bodyCode = stripEnvironment(bodyCode, "IEEEkeywords");
+    bodyCode = stripEnvironment(bodyCode, "keywords");
 
-  // Preprocess bodyCode to strip settings/macros that shouldn't render as text
-  bodyCode = bodyCode
-    // Strip preamble/settings macros completely
-    .replace(/\\geometry\{[^}]*\}/g, "")
-    .replace(/\\setlength\{[^}]*\}\{[^}]*\}/g, "")
-    .replace(/\\definecolor\{[^}]*\}\{[^}]*\}\{[^}]*\}/g, "")
-    .replace(/\\titleformat\*?\{[^}]*\}(?:\{[^}]*\}){0,4}/g, "")
-    .replace(/\\titlespacing\*?\{[^}]*\}(?:\{[^}]*\}){0,3}/g, "")
-    .replace(/\\setlist\*?\[[^\]]*\]\{[^}]*\}/g, "")
-    .replace(/\\newcommand\{[^}]*\}\[[^\]]*\]\{[\s\S]*?\n\}/g, "") // remove macro definition blocks
-    .replace(/\\newcommand\{[^}]*\}\{[\s\S]*?\}/g, "")
+    // Preprocess bodyCode to strip settings/macros that shouldn't render as text
+    bodyCode = bodyCode
+      // Strip preamble/settings macros completely
+      .replace(/\\geometry\{[^}]*\}/g, "")
+      .replace(/\\setlength\{[^}]*\}\{[^}]*\}/g, "")
+      .replace(/\\definecolor\{[^}]*\}\{[^}]*\}\{[^}]*\}/g, "")
+      .replace(/\\titleformat\*?\{[^}]*\}(?:\{[^}]*\}){0,4}/g, "")
+      .replace(/\\titlespacing\*?\{[^}]*\}(?:\{[^}]*\}){0,3}/g, "")
+      .replace(/\\setlist\*?\[[^\]]*\]\{[^}]*\}/g, "")
+      .replace(/\\newcommand\{[^}]*\}\[[^\]]*\]\{[\s\S]*?\n\}/g, "") // remove macro definition blocks
+      .replace(/\\newcommand\{[^}]*\}\{[\s\S]*?\}/g, "")
 
-    // Strip layout control macros from body text
-    .replace(/\\sloppy/g, "")
-    .replace(/\\hyphenpenalty=\d+/g, "")
-    .replace(/\\pagenumbering\{[^}]*\}/g, "")
-    .replace(/\\selectfont/g, "")
-    .replace(/\\fontsize\{\d+\}\{\d+\}/g, "")
+      // Strip layout control macros from body text
+      .replace(/\\sloppy/g, "")
+      .replace(/\\hyphenpenalty=\d+/g, "")
+      .replace(/\\pagenumbering\{[^}]*\}/g, "")
+      .replace(/\\selectfont/g, "")
+      .replace(/\\fontsize\{\d+\}\{\d+\}/g, "")
 
-    // Map specific custom resume macros to standard structures for elegant high-fidelity parsing
-    .replace(/\\resumesection\*?\{/g, "\\section{");
+      // Map specific custom resume macros to standard structures for elegant high-fidelity parsing
+      .replace(/\\resumesection\*?\{/g, "\\section{");
 
-  // Ensure multicols environments are on their own line boundaries to be matched correctly by line-by-line block parsers
-  bodyCode = bodyCode
-    .replace(/\\begin\{multicols\*?\}\{\d+\}/g, (match) => `\n${match}\n`)
-    .replace(/\\end\{multicols\*?\}/g, (match) => `\n${match}\n`);
+    // Ensure multicols environments are on their own line boundaries to be matched correctly by line-by-line block parsers
+    bodyCode = bodyCode
+      .replace(/\\begin\{multicols\*?\}\{\d+\}/g, (match) => `\n${match}\n`)
+      .replace(/\\end\{multicols\*?\}/g, (match) => `\n${match}\n`);
 
-  // Renders the structured paper body
-  const docBody = parseLaTeXBody(bodyCode);
+    // Renders the structured paper body
+    const docBody = parseLaTeXBody(bodyCode);
+
+    return { title, author, date, abstract, keywords, docBody };
+  }, [code]);
+
+  const { title, author, date, abstract, keywords, docBody } = parsedData;
 
   const handleCopyCode = async () => {
     try {
