@@ -155,6 +155,30 @@ pub fn is_node_private(conn: &Connection, node_id: &str) -> Result<bool, String>
     Ok(effective == "redacted" || effective == "locked")
 }
 
+fn resolve_vault_privacy_in_memory(
+    vault_id: &str,
+    map: &std::collections::HashMap<String, (Option<String>, String)>,
+) -> String {
+    let mut current_id = Some(vault_id.to_string());
+    let mut strictest = "open".to_string();
+    let mut depth = 0;
+    while let Some(id) = current_id {
+        depth += 1;
+        if depth > 100 {
+            break;
+        }
+        if let Some((parent_id, tier)) = map.get(&id) {
+            strictest =
+                privacy::get_effective_privacy(Some(tier.as_str()), None, Some(strictest.as_str()))
+                    .to_string();
+            current_id = parent_id.clone();
+        } else {
+            break;
+        }
+    }
+    strictest
+}
+
 pub fn log_memory_agent_error(conn: &Connection, raw_response: &str) -> Result<(), String> {
     let existing_str: Option<String> = conn
         .query_row(
@@ -190,6 +214,77 @@ pub fn log_memory_agent_error(conn: &Connection, raw_response: &str) -> Result<(
     .map_err(|err| format!("Failed to write memory_agent_errors setting: {err}"))?;
 
     Ok(())
+}
+
+fn fetch_private_referenced_nodes(
+    conn: &Connection,
+    unique_node_ids: &std::collections::HashSet<String>,
+    vault_map: &std::collections::HashMap<String, (Option<String>, String)>,
+) -> Result<std::collections::HashSet<String>, String> {
+    let mut private_nodes = std::collections::HashSet::new();
+
+    if unique_node_ids.is_empty() {
+        return Ok(private_nodes);
+    }
+
+    let unique_node_ids_vec: Vec<String> = unique_node_ids.iter().cloned().collect();
+
+    for chunk in unique_node_ids_vec.chunks(900) {
+        let placeholders = vec!["?"; chunk.len()].join(", ");
+        let query_str = format!(
+            "SELECT n.id, n.vault_id, n.sub_vault_id, COALESCE(o.privacy_tier, n.privacy_tier)
+             FROM nodes n
+             LEFT JOIN privacy_overrides o ON n.id = o.node_id
+             WHERE n.id IN ({placeholders}) AND n.deleted_at IS NULL;"
+        );
+
+        let mut node_stmt = conn
+            .prepare(&query_str)
+            .map_err(|err| format!("Failed preparing batched nodes privacy query: {err}"))?;
+
+        let params: Vec<&dyn rusqlite::ToSql> =
+            chunk.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
+
+        let mut node_rows = node_stmt
+            .query(rusqlite::params_from_iter(params))
+            .map_err(|err| format!("Failed querying batched nodes privacy: {err}"))?;
+
+        while let Some(row) = node_rows
+            .next()
+            .map_err(|err| format!("Failed reading batched node privacy row: {err}"))?
+        {
+            let id: String = row
+                .get(0)
+                .map_err(|err| format!("Failed decoding id: {err}"))?;
+            let vault_id: String = row
+                .get(1)
+                .map_err(|err| format!("Failed decoding vault_id: {err}"))?;
+            let sub_vault_id: Option<String> = row
+                .get(2)
+                .map_err(|err| format!("Failed decoding sub_vault_id: {err}"))?;
+            let node_privacy_tier: Option<String> = row
+                .get(3)
+                .map_err(|err| format!("Failed decoding node_privacy_tier: {err}"))?;
+
+            let container_tier = if let Some(ref sv_id) = sub_vault_id {
+                resolve_vault_privacy_in_memory(sv_id, vault_map)
+            } else {
+                resolve_vault_privacy_in_memory(&vault_id, vault_map)
+            };
+
+            let effective = privacy::get_effective_privacy(
+                node_privacy_tier.as_deref(),
+                None,
+                Some(container_tier.as_str()),
+            );
+
+            if effective == "redacted" || effective == "locked" {
+                private_nodes.insert(id);
+            }
+        }
+    }
+
+    Ok(private_nodes)
 }
 
 pub async fn execute_memory_extraction_pipeline(
@@ -267,92 +362,8 @@ pub async fn execute_memory_extraction_pipeline(
         }
 
         // Resolves a vault effective privacy tier using the in-memory cache
-        let resolve_vault_privacy_in_memory =
-            |vault_id: &str,
-             map: &std::collections::HashMap<String, (Option<String>, String)>|
-             -> String {
-                let mut current_id = Some(vault_id.to_string());
-                let mut strictest = "open".to_string();
-                let mut depth = 0;
-                while let Some(id) = current_id {
-                    depth += 1;
-                    if depth > 100 {
-                        break;
-                    }
-                    if let Some((parent_id, tier)) = map.get(&id) {
-                        strictest = privacy::get_effective_privacy(
-                            Some(tier.as_str()),
-                            None,
-                            Some(strictest.as_str()),
-                        )
-                        .to_string();
-                        current_id = parent_id.clone();
-                    } else {
-                        break;
-                    }
-                }
-                strictest
-            };
-
-        // Query the privacy parameters of all unique referenced nodes in a single batched query
-        let mut private_nodes = std::collections::HashSet::new();
-        if !unique_node_ids.is_empty() {
-            let placeholders = vec!["?"; unique_node_ids.len()].join(", ");
-            let query_str = format!(
-                "SELECT n.id, n.vault_id, n.sub_vault_id, COALESCE(o.privacy_tier, n.privacy_tier)
-                 FROM nodes n
-                 LEFT JOIN privacy_overrides o ON n.id = o.node_id
-                 WHERE n.id IN ({placeholders}) AND n.deleted_at IS NULL;"
-            );
-
-            let mut node_stmt = conn
-                .prepare(&query_str)
-                .map_err(|err| format!("Failed preparing batched nodes privacy query: {err}"))?;
-
-            let unique_node_ids_vec: Vec<String> = unique_node_ids.into_iter().collect();
-            let params: Vec<&dyn rusqlite::ToSql> = unique_node_ids_vec
-                .iter()
-                .map(|id| id as &dyn rusqlite::ToSql)
-                .collect();
-
-            let mut node_rows = node_stmt
-                .query(rusqlite::params_from_iter(params))
-                .map_err(|err| format!("Failed querying batched nodes privacy: {err}"))?;
-
-            while let Some(row) = node_rows
-                .next()
-                .map_err(|err| format!("Failed reading batched node privacy row: {err}"))?
-            {
-                let id: String = row
-                    .get(0)
-                    .map_err(|err| format!("Failed decoding id: {err}"))?;
-                let vault_id: String = row
-                    .get(1)
-                    .map_err(|err| format!("Failed decoding vault_id: {err}"))?;
-                let sub_vault_id: Option<String> = row
-                    .get(2)
-                    .map_err(|err| format!("Failed decoding sub_vault_id: {err}"))?;
-                let node_privacy_tier: Option<String> = row
-                    .get(3)
-                    .map_err(|err| format!("Failed decoding node_privacy_tier: {err}"))?;
-
-                let container_tier = if let Some(ref sv_id) = sub_vault_id {
-                    resolve_vault_privacy_in_memory(sv_id, &vault_map)
-                } else {
-                    resolve_vault_privacy_in_memory(&vault_id, &vault_map)
-                };
-
-                let effective = privacy::get_effective_privacy(
-                    node_privacy_tier.as_deref(),
-                    None,
-                    Some(container_tier.as_str()),
-                );
-
-                if effective == "redacted" || effective == "locked" {
-                    private_nodes.insert(id);
-                }
-            }
-        }
+        // Query the privacy parameters of all unique referenced nodes in batched chunks.
+        let private_nodes = fetch_private_referenced_nodes(&conn, &unique_node_ids, &vault_map)?;
 
         // Filter messages in memory using the fast private-nodes HashSet lookup
         let mut filtered_history = Vec::new();
@@ -2098,6 +2109,10 @@ fn tag_list(state: tauri::State<'_, DbState>) -> IpcResponse<Vec<Tag>> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::{HashMap, HashSet};
+
+    use rusqlite::Connection;
+
     use super::{
         ensure_encrypted_node_can_be_unredacted, ensure_encrypted_vault_can_be_unredacted,
     };
@@ -2150,6 +2165,58 @@ mod tests {
         let session_key = Some([9_u8; 32]);
         let result = ensure_encrypted_node_can_be_unredacted(true, session_key, false);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn fetch_private_referenced_nodes_chunks_large_in_lists() {
+        let mut conn = Connection::open_in_memory()
+            .unwrap_or_else(|err| panic!("expected in-memory sqlite connection: {err}"));
+        conn.execute_batch(
+            "CREATE TABLE nodes (
+                id TEXT PRIMARY KEY,
+                vault_id TEXT NOT NULL,
+                sub_vault_id TEXT,
+                privacy_tier TEXT,
+                deleted_at TEXT
+             );
+             CREATE TABLE privacy_overrides (
+                node_id TEXT PRIMARY KEY,
+                privacy_tier TEXT
+             );",
+        )
+        .unwrap_or_else(|err| panic!("expected test schema to initialize: {err}"));
+
+        let tx = conn
+            .transaction()
+            .unwrap_or_else(|err| panic!("expected test transaction: {err}"));
+        let mut unique_node_ids = HashSet::new();
+
+        for index in 0..1001 {
+            let node_id = format!("node_{index}");
+            unique_node_ids.insert(node_id.clone());
+            tx.execute(
+                "INSERT INTO nodes (id, vault_id, sub_vault_id, privacy_tier, deleted_at)
+                 VALUES (?1, 'vault_root', NULL, 'locked', NULL);",
+                [node_id],
+            )
+            .unwrap_or_else(|err| panic!("expected node insert to succeed: {err}"));
+        }
+
+        tx.commit()
+            .unwrap_or_else(|err| panic!("expected test commit: {err}"));
+
+        let mut vault_map: HashMap<String, (Option<String>, String)> = HashMap::new();
+        vault_map.insert("vault_root".to_string(), (None, "open".to_string()));
+
+        let private_nodes =
+            super::fetch_private_referenced_nodes(&conn, &unique_node_ids, &vault_map)
+                .unwrap_or_else(|err| {
+                    panic!("expected batched privacy lookup to succeed for >999 ids: {err}")
+                });
+
+        assert_eq!(private_nodes.len(), 1001);
+        assert!(private_nodes.contains("node_0"));
+        assert!(private_nodes.contains("node_1000"));
     }
 }
 
