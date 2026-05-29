@@ -256,17 +256,19 @@ function runSvgSanitizerTests() {
 
   // Only test sanitizeSvg in environments where DOMParser is defined
   if (typeof globalThis.DOMParser !== "undefined") {
-    const dirtySvg = `<svg><script>alert('XSS')</script><rect onclick="alert('XSS')" href="javascript:alert('XSS')" xlink:href="data:image/svg+xml;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==" src="vbscript:msgbox('XSS')" width="100"/></svg>`;
+    const dirtySvg = `<svg><script>alert('XSS')</script><rect id="javascript:label" class="data:image-label" onclick="alert('XSS')" href="javascript:alert('XSS')" xlink:href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB" src="vbscript:msgbox('XSS')" width="100"/></svg>`;
     const sanitized = sanitizeSvg(dirtySvg);
     if (
       sanitized.includes("<script") ||
       sanitized.includes("onclick") ||
-      sanitized.includes("javascript:") ||
-      sanitized.includes("data:") ||
-      sanitized.includes("vbscript:")
+      sanitized.includes('href="javascript:') ||
+      sanitized.includes("vbscript:") ||
+      !sanitized.includes("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB") ||
+      !sanitized.includes("javascript:label") ||
+      !sanitized.includes("data:image-label")
     ) {
       throw new Error(
-        "runSvgSanitizerTests Failed: sanitizeSvg failed to strip script elements, event handlers, or javascript:/data:/vbscript: attributes"
+        "runSvgSanitizerTests Failed: sanitizeSvg failed to strip script elements, event handlers, or unsafe URL attributes while preserving safe data:image references"
       );
     }
   }

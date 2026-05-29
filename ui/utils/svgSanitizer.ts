@@ -8,6 +8,18 @@ export function sanitizeSvgText(text: string): string {
   return text.replace(/[^a-zA-Z0-9\- ]/g, "");
 }
 
+function stripWhitespaceAndControlChars(value: string): string {
+  let result = "";
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    if (code <= 32 || (code >= 127 && code <= 159)) {
+      continue;
+    }
+    result += value[index];
+  }
+  return result.toLowerCase();
+}
+
 /**
  * Sanitizes an untrusted SVG XML string, removing any <script> tags,
  * event handler attributes, and javascript: links to prevent XSS.
@@ -36,14 +48,18 @@ export function sanitizeSvg(svgMarkup: string): string {
       const attrs = Array.from(el.attributes);
       for (const attr of attrs) {
         const attrName = attr.name.toLowerCase();
-        const attrVal = attr.value.toLowerCase();
-        const valClean = attrVal.trim().replace(/\s/g, "");
-        if (
-          attrName.startsWith("on") ||
-          valClean.includes("javascript:") ||
-          valClean.includes("data:") ||
-          valClean.includes("vbscript:")
-        ) {
+        const attrVal = attr.value;
+        const valClean = stripWhitespaceAndControlChars(attrVal.trim());
+        const isUrlAttribute =
+          attrName === "href" ||
+          attrName === "xlink:href" ||
+          attrName === "src" ||
+          attrName.endsWith(":href");
+        const isDangerousUrl =
+          valClean.startsWith("javascript:") ||
+          valClean.startsWith("vbscript:") ||
+          (valClean.startsWith("data:") && !valClean.startsWith("data:image/"));
+        if (attrName.startsWith("on") || (isUrlAttribute && isDangerousUrl)) {
           el.removeAttribute(attr.name);
         }
       }
