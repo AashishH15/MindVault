@@ -268,7 +268,7 @@ function runSvgSanitizerTests() {
       sanitized.includes("onclick") ||
       sanitized.includes('href="javascript:') ||
       sanitized.includes("vbscript:") ||
-      sanitized.includes("https://malicious.com") ||
+      sanitized.includes("malicious.com") ||
       !sanitized.includes("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB") ||
       !sanitized.includes("javascript:label") ||
       !sanitized.includes("data:image-label") ||
