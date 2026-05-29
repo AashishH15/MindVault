@@ -7,6 +7,9 @@ export function preprocessWikiLinks(text: string): string {
   // 1. Process piped [[Title|id]] format -> [Title](#node/id)
   let processed = text.replace(/\[\[([^|\]\n]+)\|([^\]\n]+)\]\]/g, "[$1](#node/$2)");
   // 2. Process standard [[Title]] format -> [Title](#node/search:Title)
-  processed = processed.replace(/\[\[([^|\]\n]+)\]\]/g, "[$1](#node/search:$1)");
+  // Encode the search title so markdown parsers keep the href intact.
+  processed = processed.replace(/\[\[([^|\]\n]+)\]\]/g, (_, title: string) => {
+    return `[${title}](#node/search:${encodeURIComponent(title)})`;
+  });
   return processed;
 }
