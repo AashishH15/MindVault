@@ -217,6 +217,11 @@ export default function NodeEditorExpanded({
     top: number;
     left: number;
   } | null>(null);
+  const activeNodeIdRef = useRef(nodeId);
+
+  useEffect(() => {
+    activeNodeIdRef.current = nodeId;
+  }, [nodeId]);
 
   const vaultById = useMemo(() => {
     const map: Record<string, Vault> = {};
@@ -228,16 +233,21 @@ export default function NodeEditorExpanded({
 
   // Load and refresh functions
   const loadNodeData = React.useCallback(async () => {
+    const requestedNodeId = nodeId;
     try {
       const [nodeRes, tagsRes, outgoingRes, incomingRes, vaultsRes, allNodesRes] =
         await Promise.all([
-          getNode(nodeId),
-          getNodeTags(nodeId),
-          listOutgoingDoors(nodeId),
-          listIncomingDoors(nodeId),
+          getNode(requestedNodeId),
+          getNodeTags(requestedNodeId),
+          listOutgoingDoors(requestedNodeId),
+          listIncomingDoors(requestedNodeId),
           listVaults(),
           getAllNodes(),
         ]);
+
+      if (activeNodeIdRef.current !== requestedNodeId) {
+        return;
+      }
 
       if (!nodeRes) {
         setStatus("Node not found.");
