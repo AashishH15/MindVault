@@ -38,7 +38,7 @@ import { runPrivacyTests } from "../ui/utils/privacy.ts";
 import { AppError, toAppError, unwrapIpcResult } from "../ui/services/ipcResult.ts";
 import { resolveVaultPath, updateVaultPosition } from "../ui/services/vaults.ts";
 import { sanitizeSvgText, sanitizeSvg } from "../ui/utils/svgSanitizer.ts";
-import { setMockInvoker } from "../ui/ipc.ts";
+import { setMockInvoker } from "../ui/ipc.testing.ts";
 import { preprocessWikiLinks } from "../ui/utils/wikilinkUtils.ts";
 import {
   getLlmMode,

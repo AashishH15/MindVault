@@ -16,6 +16,7 @@ import type {
   VaultCreateInput,
   VaultUpdateInput,
 } from "./types/generated";
+import { getMockInvoker } from "./ipcMockState.ts";
 
 export type IpcResult<T> = { ok: T } | { err: string };
 export type ChatMessage = {
@@ -43,17 +44,11 @@ export type {
   VaultUpdateInput,
 };
 
-let mockInvoker: ((command: string, payload?: Record<string, unknown>) => Promise<unknown>) | null =
-  null;
-
-export function setMockInvoker(invoker: typeof mockInvoker) {
-  mockInvoker = invoker;
-}
-
 async function invokeTyped<T>(
   command: string,
   payload?: Record<string, unknown>
 ): Promise<IpcResult<T>> {
+  const mockInvoker = getMockInvoker();
   if (mockInvoker) {
     try {
       return (await mockInvoker(command, payload)) as IpcResult<T>;
