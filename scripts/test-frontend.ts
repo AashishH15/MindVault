@@ -257,19 +257,25 @@ function runSvgSanitizerTests() {
 
   // Only test sanitizeSvg in environments where DOMParser is defined
   if (typeof globalThis.DOMParser !== "undefined") {
-    const dirtySvg = `<svg><script>alert('XSS')</script><rect id="javascript:label" class="data:image-label" onclick="alert('XSS')" href="javascript:alert('XSS')" xlink:href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB" src="vbscript:msgbox('XSS')" width="100"/></svg>`;
+    const dirtySvg = `<svg><script>alert('XSS')</script><rect id="javascript:label" class="data:image-label" onclick="alert('XSS')" href="javascript:alert('XSS')" xlink:href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB" src="vbscript:msgbox('XSS')" width="100"/><iframe src="https://malicious.com"></iframe><embed src="https://malicious.com"></embed><object data="https://malicious.com"></object><foreignObject><div>untrusted</div></foreignObject><use href="#local-icon" xlink:href="https://malicious.com/ssrf"/></svg>`;
     const sanitized = sanitizeSvg(dirtySvg);
     if (
       sanitized.includes("<script") ||
+      sanitized.includes("<iframe") ||
+      sanitized.includes("<embed") ||
+      sanitized.includes("<object") ||
+      sanitized.includes("<foreignObject") ||
       sanitized.includes("onclick") ||
       sanitized.includes('href="javascript:') ||
       sanitized.includes("vbscript:") ||
+      sanitized.includes("https://malicious.com") ||
       !sanitized.includes("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB") ||
       !sanitized.includes("javascript:label") ||
-      !sanitized.includes("data:image-label")
+      !sanitized.includes("data:image-label") ||
+      !sanitized.includes('href="#local-icon"')
     ) {
       throw new Error(
-        "runSvgSanitizerTests Failed: sanitizeSvg failed to strip script elements, event handlers, or unsafe URL attributes while preserving safe data:image references"
+        "runSvgSanitizerTests Failed: sanitizeSvg failed to strip script, iframe, embed, object, or foreignObject elements, or failed to block unsafe external resource URLs while preserving safe local references and data:image references"
       );
     }
   }

@@ -35,13 +35,16 @@ export function sanitizeSvg(svgMarkup: string): string {
       return "";
     }
 
-    // 1. Remove all <script> elements
-    const scripts = doc.getElementsByTagName("script");
-    while (scripts.length > 0) {
-      scripts[0].parentNode?.removeChild(scripts[0]);
+    // 1. Remove all dangerous elements
+    const dangerousTags = ["script", "iframe", "embed", "object", "foreignobject", "link", "meta"];
+    for (const tag of dangerousTags) {
+      const elements = doc.getElementsByTagName(tag);
+      while (elements.length > 0) {
+        elements[0].parentNode?.removeChild(elements[0]);
+      }
     }
 
-    // 2. Remove all event handlers (attributes starting with "on") and javascript: links
+    // 2. Remove all event handlers and strictly validate URL attributes
     const allElements = doc.getElementsByTagName("*");
     for (let i = 0; i < allElements.length; i++) {
       const el = allElements[i];
@@ -55,18 +58,25 @@ export function sanitizeSvg(svgMarkup: string): string {
           attrName === "xlink:href" ||
           attrName === "src" ||
           attrName.endsWith(":href");
-        const isDangerousUrl =
-          valClean.startsWith("javascript:") ||
-          valClean.startsWith("vbscript:") ||
-          (valClean.startsWith("data:") && !valClean.startsWith("data:image/"));
-        if (attrName.startsWith("on") || (isUrlAttribute && isDangerousUrl)) {
+
+        if (attrName.startsWith("on")) {
           el.removeAttribute(attr.name);
+          continue;
+        }
+
+        if (isUrlAttribute) {
+          // Strict URL allowlist: Only allow local references (starting with "#") or safe inline data:image/ images.
+          // Everything else (e.g. http:, https:, javascript:, data:text/html, etc.) is stripped.
+          const isAllowedUrl = valClean.startsWith("#") || valClean.startsWith("data:image/");
+          if (!isAllowedUrl) {
+            el.removeAttribute(attr.name);
+          }
         }
       }
     }
 
     const serializer = new XMLSerializer();
-    return serializer.serializeToString(doc);
+    return doc.documentElement ? serializer.serializeToString(doc) : "";
   } catch (err) {
     console.error("SVG sanitization failed:", err);
     return "";
