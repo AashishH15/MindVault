@@ -20,6 +20,8 @@ import {
   setSetting,
 } from "./services/settings";
 import NodeEditorExpanded from "./components/NodeEditorExpanded";
+import styles from "./style/components/MemoryBadge.module.css";
+import { countPendingChangesetItems } from "./services/memoryAgent";
 import "./style/MonoStyles.css";
 
 function App() {
@@ -27,6 +29,34 @@ function App() {
   const [needsOnboarding, setNeedsOnboarding] = useState<boolean>(false);
   const [onboardingBusy, setOnboardingBusy] = useState<boolean>(false);
   const [onboardingError, setOnboardingError] = useState<string | null>(null);
+  const [pendingProposalCount, setPendingProposalCount] = useState<number>(0);
+
+  useEffect(() => {
+    let active = true;
+    const poll = () => {
+      void countPendingChangesetItems()
+        .then((count) => {
+          if (active) {
+            setPendingProposalCount(count);
+          }
+        })
+        .catch((error) => {
+          console.error("Failed to fetch pending changeset items count:", error);
+        });
+    };
+
+    if (onboardingResolved && !needsOnboarding) {
+      poll();
+      const intervalId = setInterval(poll, 30_000);
+      return () => {
+        active = false;
+        clearInterval(intervalId);
+      };
+    }
+    return () => {
+      active = false;
+    };
+  }, [onboardingResolved, needsOnboarding]);
 
   useEffect(() => {
     void refreshAllPriorityScores().catch(() => {});
@@ -439,6 +469,18 @@ function App() {
         ) : null}
         {onboardingResolved && needsOnboarding ? null : (
           <>
+            <div className={styles.appTopBar}>
+              <span className={styles.appTopBarTitle}>Memory Agent</span>
+              {pendingProposalCount > 0 && (
+                <button
+                  type="button"
+                  className={styles.pendingBadge}
+                  title="Pending memory proposals"
+                >
+                  {pendingProposalCount} pending
+                </button>
+              )}
+            </div>
             <div className="app-workspace">
               <section className="zen-canvas" onClick={onZenCanvasClick} style={zenCanvasStyle}>
                 {/* Floating segment view toggle */}
@@ -499,6 +541,11 @@ function App() {
                     isRedactedUnlocked={isRedactedUnlocked}
                     onModalToggle={setChatModalOpen}
                     onSelectNode={onSelectNode}
+                    onRefreshPendingCount={() => {
+                      void countPendingChangesetItems()
+                        .then(setPendingProposalCount)
+                        .catch(console.error);
+                    }}
                   />
                 )}
               </section>
