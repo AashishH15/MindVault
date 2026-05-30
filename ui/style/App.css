@@ -1,7 +1,9 @@
 .hybrid-shell {
-  position: relative;
-  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
   overflow: hidden;
+  position: relative;
   margin: 0;
   padding: 0;
   background: var(--background-secondary);
@@ -14,6 +16,14 @@
 
   /* Control the size of each grid square */
   background-size: 40px 40px;
+}
+
+.app-workspace {
+  position: relative;
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+  width: 100%;
 }
 
 .zen-canvas {
@@ -64,8 +74,11 @@
   box-shadow: 0 2px 8px rgba(188, 108, 37, 0.06);
 }
 
-.hybrid-shell.modal-open .sidebar-toggle-btn {
-  display: none;
+.hybrid-shell.modal-open .sidebar-toggle-btn,
+.hybrid-shell.modal-open .canvas-view-toggle-pill,
+.hybrid-shell:has(.charts-modal-overlay) .sidebar-toggle-btn,
+.hybrid-shell:has(.charts-modal-overlay) .canvas-view-toggle-pill {
+  display: none !important;
 }
 
 .sidebar-toggle-btn:hover {
@@ -100,7 +113,7 @@
 } */
 
 .sidebar-toggle-btn.right {
-  right: 16px;
+  right: 48px;
 }
 
 /* .sidebar-toggle-btn.right.open {
@@ -158,9 +171,16 @@
   z-index: 25;
   transition:
     transform 220ms ease,
-    opacity 220ms ease;
+    opacity 220ms ease,
+    filter 220ms ease;
   opacity: 0;
   pointer-events: none;
+  filter: blur(0px);
+}
+
+.hybrid-shell:has(.charts-modal-overlay) .pane-wrap {
+  filter: blur(8px);
+  pointer-events: none !important;
 }
 
 .pane-wrap.show {

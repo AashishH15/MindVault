@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   Backlink,
+  Changeset,
+  ChangesetItem,
   Door,
   DoorCreateInput,
   Node,
@@ -14,6 +16,7 @@ import type {
   VaultCreateInput,
   VaultUpdateInput,
 } from "./types/generated";
+import { getMockInvoker } from "./ipcMockState.ts";
 
 export type IpcResult<T> = { ok: T } | { err: string };
 export type ChatMessage = {
@@ -25,6 +28,8 @@ export type ChatMessage = {
 };
 export type {
   Backlink,
+  Changeset,
+  ChangesetItem,
   Door,
   DoorCreateInput,
   Node,
@@ -43,6 +48,14 @@ async function invokeTyped<T>(
   command: string,
   payload?: Record<string, unknown>
 ): Promise<IpcResult<T>> {
+  const mockInvoker = getMockInvoker();
+  if (mockInvoker) {
+    try {
+      return (await mockInvoker(command, payload)) as IpcResult<T>;
+    } catch (error) {
+      return { err: String(error) };
+    }
+  }
   try {
     return await invoke<IpcResult<T>>(command, payload);
   } catch (error) {
@@ -84,6 +97,10 @@ export function chatAppendMessage(id: string, role: string, content: string) {
 
 export function chatClearHistory() {
   return invokeTyped<void>("chat_clear_history");
+}
+
+export function chatEditAndTruncate(editId: string, newContent: string, deleteIds: string[]) {
+  return invokeTyped<void>("chat_edit_and_truncate", { editId, newContent, deleteIds });
 }
 
 export function vaultCreate(input: VaultCreateInput) {
@@ -225,6 +242,7 @@ export function chatWithLlm(
   endpoint: string,
   model: string,
   userPrompt: string,
+  chartsEnabled: boolean,
   isRedactedUnlocked: boolean
 ) {
   return invoke<string>("llm_chat", {
@@ -234,6 +252,7 @@ export function chatWithLlm(
     endpoint,
     model,
     userPrompt,
+    chartsEnabled,
     isRedactedUnlocked,
   })
     .then((ok) => ({ ok }) as IpcResult<string>)
@@ -260,4 +279,38 @@ export function onboardingExtractProposals(
 /** Persist accepted onboarding proposals into nodes and mark onboarding complete. */
 export function onboardingCommit(proposals: OnboardingNodeCommitInput[]) {
   return invokeTyped<boolean>("onboarding_commit", { proposals });
+}
+
+export function saveMarkdownFile(defaultName: string, content: string) {
+  return invokeTyped<boolean>("save_markdown_file", { defaultName, content });
+}
+
+export function memoryExtract(provider: string, endpoint: string, model: string) {
+  return invoke<Changeset>("memory_extract", { provider, endpoint, model })
+    .then((ok) => ({ ok }) as IpcResult<Changeset>)
+    .catch((error) => ({ err: String(error) }) as IpcResult<Changeset>);
+}
+
+export function memoryExtractIfReady(provider: string, endpoint: string, model: string) {
+  return invoke<Changeset | null>("memory_extract_if_ready", { provider, endpoint, model })
+    .then((ok) => ({ ok }) as IpcResult<Changeset | null>)
+    .catch((error) => ({ err: String(error) }) as IpcResult<Changeset | null>);
+}
+
+export function changesetCountPending() {
+  return invoke<number>("changeset_count_pending")
+    .then((ok) => ({ ok }) as IpcResult<number>)
+    .catch((error) => ({ err: String(error) }) as IpcResult<number>);
+}
+
+export function changesetListPending() {
+  return invoke<Changeset[]>("changeset_list_pending")
+    .then((ok) => ({ ok }) as IpcResult<Changeset[]>)
+    .catch((error) => ({ err: String(error) }) as IpcResult<Changeset[]>);
+}
+
+export function changesetListItems(changesetId: string) {
+  return invoke<ChangesetItem[]>("changeset_list_items", { changesetId })
+    .then((ok) => ({ ok }) as IpcResult<ChangesetItem[]>)
+    .catch((error) => ({ err: String(error) }) as IpcResult<ChangesetItem[]>);
 }

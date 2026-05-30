@@ -12,13 +12,14 @@ mod auth;
 mod chat;
 pub mod ipc_types;
 pub mod llm;
+pub mod memory_agent;
 pub mod onboarding;
 mod priority;
 mod privacy;
 mod redacted;
 use ipc_types::{
-    Backlink, Door, DoorCreateInput, Node, NodeCreateInput, NodeUpdateInput,
-    OnboardingNodeCommitInput, OnboardingProposedNode, Tag, TagCreateInput, Vault,
+    Backlink, Changeset, ChangesetItem, Door, DoorCreateInput, Node, NodeCreateInput,
+    NodeUpdateInput, OnboardingNodeCommitInput, OnboardingProposedNode, Tag, TagCreateInput, Vault,
     VaultCreateInput, VaultUpdateInput,
 };
 
@@ -55,6 +56,566 @@ fn greet(name: &str) -> IpcResponse<String> {
     }
 }
 
+#[tauri::command]
+async fn save_markdown_file(default_name: String, content: String) -> IpcResponse<bool> {
+    if content.len() > 10_000_000 {
+        return IpcResponse::Err {
+            err: "Content exceeds maximum export size".into(),
+        };
+    }
+
+    let path = rfd::AsyncFileDialog::new()
+        .set_file_name(&default_name)
+        .add_filter("Markdown", &["md"])
+        .save_file()
+        .await;
+
+    match path {
+        Some(handle) => {
+            let path_buf = handle.path().to_path_buf();
+            let write_res =
+                tauri::async_runtime::spawn_blocking(move || std::fs::write(path_buf, content))
+                    .await;
+
+            match write_res {
+                Ok(Ok(_)) => IpcResponse::Ok { ok: true },
+                Ok(Err(e)) => IpcResponse::Err { err: e.to_string() },
+                Err(join_err) => IpcResponse::Err {
+                    err: format!("Spawn blocking failed: {join_err}"),
+                },
+            }
+        }
+        None => IpcResponse::Ok { ok: false },
+    }
+}
+
+static MEMORY_AGENT_LIMITER: std::sync::OnceLock<
+    governor::RateLimiter<
+        governor::state::direct::NotKeyed,
+        governor::state::InMemoryState,
+        governor::clock::DefaultClock,
+    >,
+> = std::sync::OnceLock::new();
+
+pub fn check_rate_limit(key: &str) -> Result<(), String> {
+    if key == "memory_agent" {
+        let limiter = MEMORY_AGENT_LIMITER.get_or_init(|| {
+            let quota = match governor::Quota::with_period(std::time::Duration::from_secs(10)) {
+                Some(q) => q,
+                None => {
+                    // Fall back to a standard rate limit of 1 per second in the impossible event
+                    // that with_period fails, avoiding expect/unwrap entirely for Clippy.
+                    let fallback_nonzero = std::num::NonZeroU32::MIN;
+                    governor::Quota::per_second(fallback_nonzero)
+                }
+            };
+            governor::RateLimiter::direct(quota)
+        });
+
+        if limiter.check().is_err() {
+            return Err(
+                "Rate limit exceeded for memory extraction. Please wait before running it again."
+                    .to_string(),
+            );
+        }
+    }
+    Ok(())
+}
+
+pub fn is_node_private(conn: &Connection, node_id: &str) -> Result<bool, String> {
+    let node_info = conn.query_row(
+        "SELECT n.vault_id, n.sub_vault_id, COALESCE(o.privacy_tier, n.privacy_tier)
+             FROM nodes n
+             LEFT JOIN privacy_overrides o ON n.id = o.node_id
+             WHERE n.id = ?1 AND n.deleted_at IS NULL
+             LIMIT 1;",
+        [node_id],
+        |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, Option<String>>(2)?,
+            ))
+        },
+    );
+
+    let (vault_id, sub_vault_id, privacy_tier) = match node_info {
+        Ok(info) => info,
+        Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(false), // Node doesn't exist or is deleted
+        Err(err) => return Err(format!("Database error in is_node_private: {err}")),
+    };
+
+    let effective = resolve_node_effective_privacy(
+        conn,
+        &vault_id,
+        sub_vault_id.as_deref(),
+        privacy_tier.as_deref(),
+    )?;
+
+    Ok(effective == "redacted" || effective == "locked")
+}
+
+fn resolve_vault_privacy_in_memory(
+    vault_id: &str,
+    map: &std::collections::HashMap<String, (Option<String>, String)>,
+) -> String {
+    let mut current_id = Some(vault_id.to_string());
+    let mut strictest = "open".to_string();
+    let mut depth = 0;
+    while let Some(id) = current_id {
+        depth += 1;
+        if depth > 100 {
+            break;
+        }
+        if let Some((parent_id, tier)) = map.get(&id) {
+            strictest =
+                privacy::get_effective_privacy(Some(tier.as_str()), None, Some(strictest.as_str()))
+                    .to_string();
+            current_id = parent_id.clone();
+        } else {
+            break;
+        }
+    }
+    strictest
+}
+
+pub fn log_memory_agent_error(conn: &Connection, raw_response: &str) -> Result<(), String> {
+    let existing_str: Option<String> = conn
+        .query_row(
+            "SELECT value FROM settings WHERE key = 'memory_agent_errors' LIMIT 1;",
+            [],
+            |row| row.get(0),
+        )
+        .ok();
+
+    let mut errors: Vec<String> = match existing_str {
+        Some(s) => serde_json::from_str(&s).unwrap_or_default(),
+        None => Vec::new(),
+    };
+
+    errors.push(raw_response.to_string());
+
+    if errors.len() > 5 {
+        let skip_count = errors.len() - 5;
+        errors = errors.into_iter().skip(skip_count).collect();
+    }
+
+    let new_str = serde_json::to_string(&errors)
+        .map_err(|err| format!("Failed to serialize memory agent errors: {err}"))?;
+
+    conn.execute(
+        "INSERT INTO settings (key, value, scope, updated_at)
+         VALUES ('memory_agent_errors', ?1, 'global', datetime('now'))
+         ON CONFLICT(key) DO UPDATE
+         SET value = excluded.value,
+             updated_at = datetime('now');",
+        [new_str],
+    )
+    .map_err(|err| format!("Failed to write memory_agent_errors setting: {err}"))?;
+
+    Ok(())
+}
+
+fn fetch_private_referenced_nodes(
+    conn: &Connection,
+    unique_node_ids: &std::collections::HashSet<String>,
+    vault_map: &std::collections::HashMap<String, (Option<String>, String)>,
+) -> Result<std::collections::HashSet<String>, String> {
+    let mut private_nodes = std::collections::HashSet::new();
+
+    if unique_node_ids.is_empty() {
+        return Ok(private_nodes);
+    }
+
+    let unique_node_ids_vec: Vec<String> = unique_node_ids.iter().cloned().collect();
+
+    for chunk in unique_node_ids_vec.chunks(900) {
+        let placeholders = vec!["?"; chunk.len()].join(", ");
+        let query_str = format!(
+            "SELECT n.id, n.vault_id, n.sub_vault_id, COALESCE(o.privacy_tier, n.privacy_tier)
+             FROM nodes n
+             LEFT JOIN privacy_overrides o ON n.id = o.node_id
+             WHERE n.id IN ({placeholders}) AND n.deleted_at IS NULL;"
+        );
+
+        let mut node_stmt = conn
+            .prepare(&query_str)
+            .map_err(|err| format!("Failed preparing batched nodes privacy query: {err}"))?;
+
+        let params: Vec<&dyn rusqlite::ToSql> =
+            chunk.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
+
+        let mut node_rows = node_stmt
+            .query(rusqlite::params_from_iter(params))
+            .map_err(|err| format!("Failed querying batched nodes privacy: {err}"))?;
+
+        while let Some(row) = node_rows
+            .next()
+            .map_err(|err| format!("Failed reading batched node privacy row: {err}"))?
+        {
+            let id: String = row
+                .get(0)
+                .map_err(|err| format!("Failed decoding id: {err}"))?;
+            let vault_id: String = row
+                .get(1)
+                .map_err(|err| format!("Failed decoding vault_id: {err}"))?;
+            let sub_vault_id: Option<String> = row
+                .get(2)
+                .map_err(|err| format!("Failed decoding sub_vault_id: {err}"))?;
+            let node_privacy_tier: Option<String> = row
+                .get(3)
+                .map_err(|err| format!("Failed decoding node_privacy_tier: {err}"))?;
+
+            let container_tier = if let Some(ref sv_id) = sub_vault_id {
+                resolve_vault_privacy_in_memory(sv_id, vault_map)
+            } else {
+                resolve_vault_privacy_in_memory(&vault_id, vault_map)
+            };
+
+            let effective = privacy::get_effective_privacy(
+                node_privacy_tier.as_deref(),
+                None,
+                Some(container_tier.as_str()),
+            );
+
+            if effective == "redacted" || effective == "locked" {
+                private_nodes.insert(id);
+            }
+        }
+    }
+
+    Ok(private_nodes)
+}
+
+pub async fn execute_memory_extraction_pipeline(
+    provider: String,
+    endpoint: String,
+    model: String,
+    db_path: PathBuf,
+) -> Result<Changeset, String> {
+    // 1. Load and filter chat history synchronously within scoped block to drop connection before await
+    let chat_history = {
+        let conn = open_connection(&db_path)?;
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, role, content, node_refs, created_at
+                 FROM session_messages
+                 WHERE session_id = 'default-session'
+                 ORDER BY created_at ASC, id ASC;",
+            )
+            .map_err(|err| format!("Failed preparing session_messages query: {err}"))?;
+
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                ))
+            })
+            .map_err(|err| format!("Failed querying session_messages: {err}"))?;
+
+        let mut raw_messages = Vec::new();
+        for r in rows {
+            raw_messages.push(r.map_err(|err| format!("Failed reading message row: {err}"))?);
+        }
+
+        // Collect all unique node IDs referenced in the messages
+        let mut unique_node_ids = std::collections::HashSet::new();
+        for (_, _, _, node_refs_json, _) in &raw_messages {
+            let node_ids: Vec<String> = serde_json::from_str(node_refs_json).unwrap_or_default();
+            for id in node_ids {
+                if !id.trim().is_empty() {
+                    unique_node_ids.insert(id);
+                }
+            }
+        }
+
+        // Load all vaults/sub-vaults into a local cache map in a single query
+        let mut vault_map = std::collections::HashMap::new();
+        let mut vault_stmt = conn
+            .prepare(
+                "SELECT id, NULL AS parent_vault_id, privacy_tier FROM vaults WHERE deleted_at IS NULL
+                 UNION ALL
+                 SELECT id, vault_id AS parent_vault_id, COALESCE(privacy_tier, 'open') AS privacy_tier
+                 FROM sub_vaults WHERE deleted_at IS NULL;",
+            )
+            .map_err(|err| format!("Failed preparing vaults union query: {err}"))?;
+
+        let vault_rows = vault_stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(|err| format!("Failed querying vaults union: {err}"))?;
+
+        for r in vault_rows {
+            let (id, parent_id, tier) =
+                r.map_err(|err| format!("Failed reading vault row: {err}"))?;
+            vault_map.insert(id, (parent_id, tier));
+        }
+
+        // Resolves a vault effective privacy tier using the in-memory cache
+        // Query the privacy parameters of all unique referenced nodes in batched chunks.
+        let private_nodes = fetch_private_referenced_nodes(&conn, &unique_node_ids, &vault_map)?;
+
+        // Filter messages in memory using the fast private-nodes HashSet lookup
+        let mut filtered_history = Vec::new();
+        for (id, role, content, node_refs_json, created_at) in raw_messages {
+            let node_ids: Vec<String> = serde_json::from_str(&node_refs_json).unwrap_or_default();
+            let mut has_private_ref = false;
+            for node_id in &node_ids {
+                if private_nodes.contains(node_id) {
+                    has_private_ref = true;
+                    break;
+                }
+            }
+            if !has_private_ref {
+                filtered_history.push(chat::ChatMessage {
+                    id,
+                    role,
+                    content,
+                    created_at,
+                });
+            }
+        }
+
+        if filtered_history.len() < 3 {
+            return Err(
+                "Insufficient chat history (need at least 3 messages) to extract memory."
+                    .to_string(),
+            );
+        }
+        filtered_history
+    };
+
+    // 2. Format conversation
+    let mut conversation_text = String::new();
+    for msg in &chat_history {
+        conversation_text.push_str(&format!("{}: {}\n", msg.role, msg.content));
+    }
+    let user_content = format!("<conversation>\n{}\n</conversation>", conversation_text);
+
+    // 3. Build LLM message
+    let messages = [llm::client::LlmMessage {
+        role: "user".to_string(),
+        content: user_content,
+    }];
+
+    // 4. Resolve provider
+    let parsed_provider = match provider.trim().to_lowercase().as_str() {
+        "ollama" => llm::client::LlmProvider::Ollama,
+        "lmstudio" => llm::client::LlmProvider::LmStudio,
+        "anthropic" => llm::client::LlmProvider::Anthropic,
+        "openai" => llm::client::LlmProvider::OpenAi,
+        "google" => llm::client::LlmProvider::Google,
+        "xai" => llm::client::LlmProvider::XAi,
+        _ => return Err("Unsupported provider. Use 'ollama', 'lmstudio', 'anthropic', 'openai', 'google', or 'xai'.".to_string()),
+    };
+
+    // 5. Call UniversalClient::complete
+    let client = llm::client::UniversalClient::new(
+        parsed_provider,
+        endpoint.trim().to_string(),
+        model.trim().to_string(),
+    );
+
+    let raw = llm::client::LlmClient::complete(
+        &client,
+        memory_agent::prompt::MEMORY_EXTRACTION_SYSTEM_PROMPT,
+        &messages,
+    )
+    .await?;
+
+    // 6. Parse response
+    let candidates = match memory_agent::parser::parse_candidates_from_llm_output(&raw) {
+        Ok(c) => c,
+        Err(err) => {
+            eprintln!("Failed to parse candidates JSON, logging raw response and recovering gracefully: {err}");
+            // Reuse a single connection for logging, persisting, and querying
+            let mut conn = open_connection(&db_path)?;
+            if let Err(log_err) = log_memory_agent_error(&conn, &raw) {
+                eprintln!("Failed to log memory agent error: {log_err}");
+            }
+            // Persist an empty changeset gracefully
+            let tx = conn
+                .transaction()
+                .map_err(|err| format!("Failed to start transaction: {err}"))?;
+
+            let pending_changeset = memory_agent::PendingChangeset {
+                session_id: "default-session".to_string(),
+                model_used: Some(model.clone()),
+                items: Vec::new(),
+            };
+
+            let changeset_id = memory_agent::persistence::persist_changeset(
+                &tx,
+                &pending_changeset,
+                Some(&model),
+            )?;
+
+            tx.commit()
+                .map_err(|err| format!("Failed to commit transaction: {err}"))?;
+
+            // Retrieve the newly persisted empty changeset
+            let cs = conn.query_row(
+                "SELECT id, session_id, status, item_count, accepted_count, dismissed_count, model_used, created_at, reviewed_at
+                 FROM changesets
+                 WHERE id = ?1 LIMIT 1;",
+                [changeset_id],
+                |row| {
+                    Ok(Changeset {
+                        id: row.get(0)?,
+                        session_id: row.get(1)?,
+                        status: row.get(2)?,
+                        item_count: row.get(3)?,
+                        accepted_count: row.get(4)?,
+                        dismissed_count: row.get(5)?,
+                        model_used: row.get(6)?,
+                        created_at: row.get(7)?,
+                        reviewed_at: row.get(8)?,
+                    })
+                },
+            )
+            .map_err(|err| format!("Failed to retrieve persisted empty changeset: {err}"))?;
+
+            return Ok(cs);
+        }
+    };
+
+    // 7. Reuse a single connection for changeset build, persist, and retrieval
+    let mut conn = open_connection(&db_path)?;
+
+    let changeset_id = {
+        let tx = conn
+            .transaction()
+            .map_err(|err| format!("Failed to start transaction: {err}"))?;
+
+        let pending_changeset =
+            memory_agent::changeset::build_changeset(&tx, &candidates, "default-session")?;
+
+        let persisted_id =
+            memory_agent::persistence::persist_changeset(&tx, &pending_changeset, Some(&model))?;
+
+        tx.commit()
+            .map_err(|err| format!("Failed to commit transaction: {err}"))?;
+        persisted_id
+    };
+
+    // 8. Retrieve the newly persisted Changeset (reusing same connection)
+    let cs = conn.query_row(
+        "SELECT id, session_id, status, item_count, accepted_count, dismissed_count, model_used, created_at, reviewed_at
+         FROM changesets
+         WHERE id = ?1 LIMIT 1;",
+        [changeset_id],
+        |row| {
+            Ok(Changeset {
+                id: row.get(0)?,
+                session_id: row.get(1)?,
+                status: row.get(2)?,
+                item_count: row.get(3)?,
+                accepted_count: row.get(4)?,
+                dismissed_count: row.get(5)?,
+                model_used: row.get(6)?,
+                created_at: row.get(7)?,
+                reviewed_at: row.get(8)?,
+            })
+        },
+    )
+    .map_err(|err| format!("Failed to retrieve persisted changeset: {err}"))?;
+
+    Ok(cs)
+}
+
+#[tauri::command]
+async fn memory_extract(
+    provider: String,
+    endpoint: String,
+    model: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<Changeset, String> {
+    // 1. Enforce governor rate-limiting first
+    check_rate_limit("memory_agent")?;
+
+    // 2. Execute shared pipeline
+    let db_path = state.db_path.clone();
+    execute_memory_extraction_pipeline(provider, endpoint, model, db_path).await
+}
+
+#[tauri::command]
+async fn memory_extract_if_ready(
+    provider: String,
+    endpoint: String,
+    model: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<Option<Changeset>, String> {
+    // 1. Enforce governor rate-limiting first
+    check_rate_limit("memory_agent")?;
+
+    // 2. Open connection synchronously to run trigger checks
+    let db_path = state.db_path.clone();
+    let conn = open_connection(&db_path)?;
+
+    // 3. Query total message count
+    let session_id = "default-session";
+    let current_message_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM session_messages WHERE session_id = ?1;",
+            [session_id],
+            |row| row.get(0),
+        )
+        .map_err(|err| format!("Failed querying session message count: {err}"))?;
+
+    // 4. Check trigger
+    let ready = memory_agent::trigger::should_extract(&conn, session_id)?;
+    if !ready {
+        return Ok(None);
+    }
+
+    // Drop connection explicitly before starting any await calls
+    drop(conn);
+
+    // 5. Execute shared pipeline (capture result without early-returning on error,
+    //    so we always mark the extraction as attempted and respect cooldown windows)
+    let pipeline_result =
+        execute_memory_extraction_pipeline(provider, endpoint, model, db_path.clone()).await;
+
+    // 6. Mark extraction complete/attempted *before* propagating any error,
+    //    so that should_extract respects the 6-message and 2-minute cooldown
+    let conn = open_connection(&db_path)?;
+    memory_agent::trigger::mark_extraction_complete(&conn, current_message_count)?;
+
+    // 7. Now propagate the pipeline result
+    Ok(Some(pipeline_result?))
+}
+
+#[tauri::command]
+fn changeset_count_pending(state: tauri::State<'_, AppState>) -> Result<i64, String> {
+    let conn = open_connection(&state.db_path)?;
+    memory_agent::persistence::count_pending_items(&conn)
+}
+
+#[tauri::command]
+fn changeset_list_pending(state: tauri::State<'_, AppState>) -> Result<Vec<Changeset>, String> {
+    let conn = open_connection(&state.db_path)?;
+    memory_agent::persistence::list_pending_changesets(&conn)
+}
+
+#[tauri::command]
+fn changeset_list_items(
+    changeset_id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<ChangesetItem>, String> {
+    let conn = open_connection(&state.db_path)?;
+    memory_agent::persistence::list_changeset_items(&conn, &changeset_id)
+}
+
 fn sqlite_db_path<R: tauri::Runtime>(
     app: &tauri::App<R>,
 ) -> Result<PathBuf, Box<dyn std::error::Error>> {
@@ -78,7 +639,7 @@ pub(crate) fn open_connection(db_path: &Path) -> Result<Connection, String> {
     Ok(conn)
 }
 
-fn generate_id(conn: &Connection, prefix: &str) -> Result<String, String> {
+pub(crate) fn generate_id(conn: &Connection, prefix: &str) -> Result<String, String> {
     conn.query_row(
         "SELECT ?1 || '_' || lower(hex(randomblob(8)));",
         [prefix],
@@ -937,6 +1498,26 @@ fn chat_clear_history(state: tauri::State<'_, AppState>) -> IpcResponse<()> {
 }
 
 #[tauri::command]
+fn chat_edit_and_truncate(
+    state: tauri::State<'_, AppState>,
+    edit_id: String,
+    new_content: String,
+    delete_ids: Vec<String>,
+) -> IpcResponse<()> {
+    into_ipc((|| {
+        let mut conn = open_connection(&state.db_path)?;
+        let tx = conn
+            .transaction()
+            .map_err(|err| format!("Failed starting chat_edit_and_truncate transaction: {err}"))?;
+        chat::edit_and_truncate(&tx, &edit_id, &new_content, delete_ids)?;
+        tx.commit().map_err(|err| {
+            format!("Failed committing chat_edit_and_truncate transaction: {err}")
+        })?;
+        Ok(())
+    })())
+}
+
+#[tauri::command]
 fn vault_create(input: VaultCreateInput, state: tauri::State<'_, DbState>) -> IpcResponse<Vault> {
     into_ipc((|| {
         let mut conn = open_connection(&state.db_path)?;
@@ -1528,6 +2109,10 @@ fn tag_list(state: tauri::State<'_, DbState>) -> IpcResponse<Vec<Tag>> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::{HashMap, HashSet};
+
+    use rusqlite::Connection;
+
     use super::{
         ensure_encrypted_node_can_be_unredacted, ensure_encrypted_vault_can_be_unredacted,
     };
@@ -1580,6 +2165,58 @@ mod tests {
         let session_key = Some([9_u8; 32]);
         let result = ensure_encrypted_node_can_be_unredacted(true, session_key, false);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn fetch_private_referenced_nodes_chunks_large_in_lists() {
+        let mut conn = Connection::open_in_memory()
+            .unwrap_or_else(|err| panic!("expected in-memory sqlite connection: {err}"));
+        conn.execute_batch(
+            "CREATE TABLE nodes (
+                id TEXT PRIMARY KEY,
+                vault_id TEXT NOT NULL,
+                sub_vault_id TEXT,
+                privacy_tier TEXT,
+                deleted_at TEXT
+             );
+             CREATE TABLE privacy_overrides (
+                node_id TEXT PRIMARY KEY,
+                privacy_tier TEXT
+             );",
+        )
+        .unwrap_or_else(|err| panic!("expected test schema to initialize: {err}"));
+
+        let tx = conn
+            .transaction()
+            .unwrap_or_else(|err| panic!("expected test transaction: {err}"));
+        let mut unique_node_ids = HashSet::new();
+
+        for index in 0..1001 {
+            let node_id = format!("node_{index}");
+            unique_node_ids.insert(node_id.clone());
+            tx.execute(
+                "INSERT INTO nodes (id, vault_id, sub_vault_id, privacy_tier, deleted_at)
+                 VALUES (?1, 'vault_root', NULL, 'locked', NULL);",
+                [node_id],
+            )
+            .unwrap_or_else(|err| panic!("expected node insert to succeed: {err}"));
+        }
+
+        tx.commit()
+            .unwrap_or_else(|err| panic!("expected test commit: {err}"));
+
+        let mut vault_map: HashMap<String, (Option<String>, String)> = HashMap::new();
+        vault_map.insert("vault_root".to_string(), (None, "open".to_string()));
+
+        let private_nodes =
+            super::fetch_private_referenced_nodes(&conn, &unique_node_ids, &vault_map)
+                .unwrap_or_else(|err| {
+                    panic!("expected batched privacy lookup to succeed for >999 ids: {err}")
+                });
+
+        assert_eq!(private_nodes.len(), 1001);
+        assert!(private_nodes.contains("node_0"));
+        assert!(private_nodes.contains("node_1000"));
     }
 }
 
@@ -2163,12 +2800,14 @@ async fn llm_chat(
     endpoint: String,
     model: String,
     user_prompt: String,
+    charts_enabled: bool,
     is_redacted_unlocked: bool,
     state: tauri::State<'_, AppState>,
 ) -> Result<String, String> {
     let db_path = state.db_path.clone();
+    let persona_instruction = "You are MindVault's personalized, context-aware memory assistant.";
 
-    let system_prompt_from_assembler = {
+    let mut system_prompt = {
         let conn = open_connection(&db_path)?;
         llm::assembler::build_context(
             &conn,
@@ -2180,6 +2819,61 @@ async fn llm_chat(
             },
         )
     }?;
+
+    let chart_instruction = "\n\n\
+    [VISUALIZATION SYSTEM CONTRACT]\n\
+    You have access to an interactive charting system. When a user EXPLICITLY asks you to graph, plot, chart, or visualize something, output the specification as JSON inside a ```chart code fence. Never use text-based ASCII art representations.\n\
+    \n\
+    CRITICAL: ONLY output a ```chart fence when the user's intent is to SEE a visual graph or chart. If the user asks you to SOLVE, EXPLAIN, COMPUTE, EVALUATE, PROVE, DERIVE, or CALCULATE something, respond with a normal text/markdown explanation showing your work and the answer. You MAY optionally append a ```chart fence AFTER your explanation if a graph would help illustrate the result, but the textual answer must come first and must be complete on its own.\n\
+    \n\
+    PROMPT DIRECTIVES:\n\
+    1. GRAPH/PLOT REQUESTS: When the user says 'graph', 'plot', 'chart', 'visualize', 'show me a graph of', or similar — output the ```chart fence directly as the primary response. Keep any surrounding text minimal.\n\
+    2. SOLVE/EXPLAIN REQUESTS: When the user says 'solve', 'evaluate', 'compute', 'integrate', 'differentiate', 'prove', 'explain', 'help me with', 'what is', 'calculate', 'find' — write a full textual solution in markdown. Use LaTeX math notation ($$...$$ or $...$) for equations. You may add a ```chart fence at the end to illustrate, but it is optional.\n\
+    3. STRING COLUMNS ARE NOT NUMERIC VALUES: When plotting datasets, columns with text/string values MUST be used as labels or categorical axes (e.g. in the 'x' array, 'labels' array, or 'theta' array). NEVER put string arrays into numeric arrays (like 'y', 'r', or 'values').\n\
+    4. PIE CHART STRUCTURE: Plotly pie charts MUST use 'labels' and 'values' inside the trace. NEVER use 'x' and 'y' for pie charts. Example: { \"type\": \"pie\", \"labels\": [\"A\", \"B\"], \"values\": [40, 60] }.\n\
+    5. RADAR CHART STRUCTURE: Plotly radar charts MUST use \"scatterpolar\" with 'r' and 'theta'. Close the polygon by repeating the first element at the end of both arrays.\n\
+    6. DO NOT ATTEMPT UNSUPPORTED DIAGRAMS: If the user requests Venn diagrams, flowcharts, mind maps, Gantt charts, network graphs, or 3D surface charts, explain the limitation in plain text. Never approximate with scatter/bubble overlays.\n\
+    \n\
+    CHART SCHEMA TYPES:\n\
+    \n\
+    1. For mathematical equations or functions (e.g., y = 2x + 1), output type \"function\":\n\
+    ```chart\n\
+    {\n\
+      \"type\": \"function\",\n\
+      \"title\": \"y = 2x + 1\",\n\
+      \"expressions\": [\n\
+        { \"expression\": \"2*x + 1\", \"color\": \"#b56a37\", \"label\": \"y = 2x + 1\" }\n\
+      ],\n\
+      \"domainX\": [-5, 5],\n\
+      \"domainY\": [-5, 5]\n\
+    }\n\
+    ```\n\
+    \n\
+    2. For statistical data (bar, line, pie, scatterpolar), output a Plotly.js JSON with \"data\" and optional \"layout\":\n\
+    ```chart\n\
+    {\n\
+      \"type\": \"plotly\",\n\
+      \"data\": [\n\
+        { \"x\": [\"Apples\", \"Bananas\", \"Cherries\"], \"y\": [12, 18, 5], \"type\": \"bar\", \"marker\": { \"color\": \"#b56a37\" } }\n\
+      ],\n\
+      \"layout\": {\n\
+        \"title\": \"Fruit Counts\"\n\
+      }\n\
+    }\n\
+    ```\n\
+    Always output fully valid JSON (double quotes for keys and string values). Do not embed comments inside the JSON.";
+
+    if charts_enabled {
+        if system_prompt.is_empty() {
+            system_prompt = format!("{persona_instruction} {chart_instruction}");
+        } else {
+            system_prompt = format!("{persona_instruction}{chart_instruction}");
+        }
+    } else if system_prompt.is_empty() {
+        system_prompt = persona_instruction.to_string();
+    } else {
+        system_prompt = format!("{persona_instruction}\n\n{system_prompt}");
+    }
 
     let parsed_provider = match provider.trim().to_lowercase().as_str() {
         "ollama" => llm::client::LlmProvider::Ollama,
@@ -2196,7 +2890,7 @@ async fn llm_chat(
         role: "user".to_string(),
         content: user_prompt,
     }];
-    llm::client::LlmClient::complete(&client, &system_prompt_from_assembler, &messages).await
+    llm::client::LlmClient::complete(&client, &system_prompt, &messages).await
 }
 
 fn map_onboarding_proposed(node: crate::onboarding::ProposedNode) -> OnboardingProposedNode {
@@ -2277,21 +2971,92 @@ fn onboarding_commit(
     into_ipc(execute_onboarding_commit(&proposals, &state.db_path))
 }
 
+struct ValidatedProposal<'a> {
+    vault_id: &'a str,
+    title: &'a str,
+    summary: &'a str,
+    detail: Option<String>,
+    node_type: &'a str,
+    source_type: &'a str,
+    tags: Option<&'a Vec<String>>,
+}
+
+fn insert_onboarding_node(
+    tx: &rusqlite::Transaction,
+    proposal: &ValidatedProposal,
+) -> Result<(), String> {
+    let vault = fetch_vault_by_id(tx, proposal.vault_id, None)?;
+    let (resolved_vault_id, resolved_sub_vault_id) = match vault.parent_vault_id {
+        Some(parent_id) => (parent_id, Some(vault.id)),
+        None => (vault.id, None),
+    };
+
+    let priority_json = priority::DEFAULT_PRIORITY_JSON;
+
+    let node_id = generate_id(tx, "node")?;
+
+    tx.execute(
+        "INSERT INTO nodes (
+            id, vault_id, sub_vault_id, node_type, title, summary, detail, source, source_type,
+            privacy_tier, priority, meta
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL, ?10, ?11);",
+        params![
+            node_id,
+            resolved_vault_id,
+            resolved_sub_vault_id,
+            proposal.node_type,
+            proposal.title,
+            proposal.summary,
+            proposal.detail,
+            Some("onboarding_wizard"),
+            proposal.source_type,
+            priority_json,
+            "{}"
+        ],
+    )
+    .map_err(|err| format!("Failed inserting onboarding node: {err}"))?;
+
+    if let Some(tags) = proposal.tags {
+        for tag_name in tags {
+            let clean_name = tag_name.trim();
+            if clean_name.is_empty() {
+                continue;
+            }
+
+            let tag_id = match tx.query_row(
+                "SELECT id FROM tags WHERE name = ?1;",
+                [clean_name],
+                |row| row.get::<_, String>(0),
+            ) {
+                Ok(id) => id,
+                Err(rusqlite::Error::QueryReturnedNoRows) => {
+                    let new_id = generate_id(tx, "tag")?;
+                    tx.execute(
+                        "INSERT INTO tags (id, name, color) VALUES (?1, ?2, NULL);",
+                        params![new_id, clean_name],
+                    )
+                    .map_err(|err| format!("Failed inserting tag: {err}"))?;
+                    new_id
+                }
+                Err(err) => return Err(format!("Failed querying tag: {err}")),
+            };
+
+            tx.execute(
+                "INSERT OR IGNORE INTO node_tags (node_id, tag_id) VALUES (?1, ?2);",
+                params![&node_id, &tag_id],
+            )
+            .map_err(|err| format!("Failed inserting node tag: {err}"))?;
+        }
+    }
+
+    Ok(())
+}
+
 pub fn execute_onboarding_commit(
     proposals: &[OnboardingNodeCommitInput],
     db_path: &Path,
 ) -> Result<bool, String> {
     (|| {
-        struct ValidatedProposal<'a> {
-            vault_id: &'a str,
-            title: &'a str,
-            summary: &'a str,
-            detail: Option<String>,
-            node_type: &'a str,
-            source_type: &'a str,
-            tags: Option<&'a Vec<String>>,
-        }
-
         let mut conn = open_connection(db_path)?;
         let mut validated_proposals = Vec::with_capacity(proposals.len());
 
@@ -2388,70 +3153,7 @@ pub fn execute_onboarding_commit(
 
         // 3. Process and write
         for proposal in validated_proposals {
-            // ensure_onboarding_vault_exists already done above
-            let vault = fetch_vault_by_id(&tx, proposal.vault_id, None)?;
-            let (resolved_vault_id, resolved_sub_vault_id) = match vault.parent_vault_id {
-                Some(parent_id) => (parent_id, Some(vault.id)),
-                None => (vault.id, None),
-            };
-
-            let priority_json = priority::DEFAULT_PRIORITY_JSON;
-
-            let node_id = generate_id(&tx, "node")?;
-
-            tx.execute(
-                "INSERT INTO nodes (
-                    id, vault_id, sub_vault_id, node_type, title, summary, detail, source, source_type,
-                    privacy_tier, priority, meta
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL, ?10, ?11);",
-                params![
-                    node_id,
-                    resolved_vault_id,
-                    resolved_sub_vault_id,
-                    proposal.node_type,
-                    proposal.title,
-                    proposal.summary,
-                    proposal.detail,
-                    Some("onboarding_wizard"),
-                    proposal.source_type,
-                    priority_json,
-                    "{}"
-                ],
-            )
-            .map_err(|err| format!("Failed inserting onboarding node: {err}"))?;
-
-            if let Some(tags) = proposal.tags {
-                for tag_name in tags {
-                    let clean_name = tag_name.trim();
-                    if clean_name.is_empty() {
-                        continue;
-                    }
-
-                    let tag_id = match tx.query_row(
-                        "SELECT id FROM tags WHERE name = ?1;",
-                        [clean_name],
-                        |row| row.get::<_, String>(0),
-                    ) {
-                        Ok(id) => id,
-                        Err(rusqlite::Error::QueryReturnedNoRows) => {
-                            let new_id = generate_id(&tx, "tag")?;
-                            tx.execute(
-                                "INSERT INTO tags (id, name, color) VALUES (?1, ?2, NULL);",
-                                params![new_id, clean_name],
-                            )
-                            .map_err(|err| format!("Failed inserting tag: {err}"))?;
-                            new_id
-                        }
-                        Err(err) => return Err(format!("Failed querying tag: {err}")),
-                    };
-
-                    tx.execute(
-                        "INSERT OR IGNORE INTO node_tags (node_id, tag_id) VALUES (?1, ?2);",
-                        params![&node_id, &tag_id],
-                    )
-                    .map_err(|err| format!("Failed inserting node tag: {err}"))?;
-                }
-            }
+            insert_onboarding_node(&tx, &proposal)?;
         }
 
         tx.execute(
@@ -2660,6 +3362,7 @@ pub fn run() {
             chat_get_history,
             chat_append_message,
             chat_clear_history,
+            chat_edit_and_truncate,
             vault_create,
             vault_list,
             vault_delete,
@@ -2694,7 +3397,13 @@ pub fn run() {
             llm_list_models,
             llm_chat,
             onboarding_extract_proposals,
-            onboarding_commit
+            onboarding_commit,
+            save_markdown_file,
+            memory_extract,
+            memory_extract_if_ready,
+            changeset_count_pending,
+            changeset_list_pending,
+            changeset_list_items
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|err| {

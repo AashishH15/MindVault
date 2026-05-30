@@ -10,8 +10,8 @@ import {
   type Vault,
   type VaultCreateInput,
   type VaultUpdateInput,
-} from "../ipc";
-import { unwrapIpcResult } from "./ipcResult";
+} from "../ipc.ts";
+import { unwrapIpcResult } from "./ipcResult.ts";
 
 export async function createVault(input: VaultCreateInput): Promise<Vault> {
   return unwrapIpcResult(vaultCreate(input));
@@ -36,11 +36,9 @@ function getParentVaultId(vault: Vault): string | null {
   return parentFromCamel ?? parentFromSnake;
 }
 
-export function resolveVaultPath(node: Node, allVaults: Vault[]): string {
-  const vaultById = new Map<string, Vault>();
-  for (const vault of allVaults) {
-    vaultById.set(vault.id, vault);
-  }
+export function resolveVaultPath(node: Node, vaults: Vault[] | Map<string, Vault>): string {
+  const vaultById =
+    vaults instanceof Map ? vaults : new Map<string, Vault>(vaults.map((v) => [v.id, v]));
 
   if (node.subVaultId) {
     const parentVault = vaultById.get(node.vaultId);

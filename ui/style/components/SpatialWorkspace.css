@@ -633,7 +633,7 @@
 .canvas-view-toggle-pill {
   position: absolute;
   top: 16px;
-  right: 68px;
+  right: 96px;
   z-index: 45;
   display: flex;
   background: rgba(253, 252, 250, 0.85);

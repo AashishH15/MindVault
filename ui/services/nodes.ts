@@ -16,7 +16,14 @@ import {
 } from "../ipc";
 import { unwrapIpcResult } from "./ipcResult";
 
+let cachedNodes: Node[] | null = null;
+
+export function clearNodesCache(): void {
+  cachedNodes = null;
+}
+
 export async function createNode(input: NodeCreateInput): Promise<Node> {
+  clearNodesCache();
   return unwrapIpcResult(nodeCreate(input));
 }
 
@@ -25,7 +32,12 @@ export async function getNode(nodeId: string): Promise<Node | null> {
 }
 
 export async function getNodes(): Promise<Node[]> {
-  return unwrapIpcResult(nodeList());
+  if (cachedNodes) {
+    return cachedNodes;
+  }
+  const nodes = await unwrapIpcResult(nodeList());
+  cachedNodes = nodes;
+  return nodes;
 }
 
 export async function getAllNodes(): Promise<Node[]> {
@@ -33,22 +45,28 @@ export async function getAllNodes(): Promise<Node[]> {
 }
 
 export async function updateNode(input: NodeUpdateInput): Promise<Node> {
+  clearNodesCache();
   return unwrapIpcResult(nodeUpdate(input));
 }
 
 export async function deleteNode(nodeId: string): Promise<boolean> {
+  clearNodesCache();
   return unwrapIpcResult(nodeDelete(nodeId));
 }
 
 export async function touchNode(nodeId: string): Promise<boolean> {
-  return unwrapIpcResult(nodeTouch(nodeId));
+  const result = await unwrapIpcResult(nodeTouch(nodeId));
+  clearNodesCache();
+  return result;
 }
 
 export async function refreshAllPriorityScores(): Promise<number> {
+  clearNodesCache();
   return unwrapIpcResult(priorityRefreshAll());
 }
 
 export async function optimizeAllPriorityProfiles(): Promise<number> {
+  clearNodesCache();
   return unwrapIpcResult(priorityOptimizeAll());
 }
 
@@ -67,9 +85,32 @@ export async function chatWithScope(
   endpoint: string,
   model: string,
   userPrompt: string,
+  chartsEnabled: boolean,
   isRedactedUnlocked: boolean
 ): Promise<string> {
-  return unwrapIpcResult(
-    chatWithLlm(nodeIds, scope, provider, endpoint, model, userPrompt, isRedactedUnlocked)
+  const result = await unwrapIpcResult(
+    chatWithLlm(
+      nodeIds,
+      scope,
+      provider,
+      endpoint,
+      model,
+      userPrompt,
+      chartsEnabled,
+      isRedactedUnlocked
+    )
+  );
+  clearNodesCache();
+  return result;
+}
+
+export async function searchNodes(query: string): Promise<Node[]> {
+  const nodes = await getAllNodes();
+  if (!query) return nodes;
+  const lowerQuery = query.toLowerCase();
+  return nodes.filter(
+    (node) =>
+      node.title.toLowerCase().includes(lowerQuery) ||
+      (node.summary && node.summary.toLowerCase().includes(lowerQuery))
   );
 }

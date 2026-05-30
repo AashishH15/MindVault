@@ -30,87 +30,18 @@ import {
 } from "../utils/privacy";
 import { PrivacyBadge } from "./PrivacyBadge";
 import PriorityBar from "./PriorityBar";
-
-/**
- * Calculates the exact top and left caret coordinates relative to the top-left corner of the textarea's padding box.
- */
-function getCaretCoordinates(
-  element: HTMLTextAreaElement,
-  position: number
-): { top: number; left: number } {
-  const div = document.createElement("div");
-  document.body.appendChild(div);
-
-  const style = div.style;
-  const computed = window.getComputedStyle(element);
-
-  style.whiteSpace = "pre-wrap";
-  style.wordBreak = "break-word";
-  style.position = "absolute";
-  style.visibility = "hidden";
-
-  const properties = [
-    "direction",
-    "boxSizing",
-    "width",
-    "height",
-    "overflowX",
-    "overflowY",
-    "borderWidth",
-    "borderStyle",
-    "paddingTop",
-    "paddingRight",
-    "paddingBottom",
-    "paddingLeft",
-    "fontFamily",
-    "fontSize",
-    "fontWeight",
-    "fontStyle",
-    "fontVariant",
-    "textTransform",
-    "wordSpacing",
-    "letterSpacing",
-    "lineHeight",
-  ];
-
-  for (const prop of properties) {
-    // @ts-expect-error - dynamic key styling access
-    style[prop] = computed[prop];
-  }
-
-  style.boxSizing = "content-box";
-  const paddingLeft = parseFloat(computed.paddingLeft) || 0;
-  const paddingRight = parseFloat(computed.paddingRight) || 0;
-  style.width = `${element.clientWidth - paddingLeft - paddingRight}px`;
-
-  const textContent = element.value.substring(0, position);
-  div.textContent = textContent;
-
-  const span = document.createElement("span");
-  span.textContent = "\u200b";
-  div.appendChild(span);
-
-  const borderTop = parseFloat(computed.borderTopWidth) || 0;
-  const borderLeft = parseFloat(computed.borderLeftWidth) || 0;
-  const lineHeight = parseFloat(computed.lineHeight) || 20;
-
-  const coordinates = {
-    top: span.offsetTop + borderTop + lineHeight - element.scrollTop,
-    left: span.offsetLeft + borderLeft - element.scrollLeft,
-  };
-
-  document.body.removeChild(div);
-  return coordinates;
-}
+import NodeEditorDetail from "./NodeEditorDetail";
 
 type NodeEditorProps = {
   selectedNodeId: string | null;
   refreshKey: number;
-  onNodeDeleted: (nodeId: string) => void;
-  onSaveSuccess: () => void;
+  onNodeDeleted?: (nodeId: string) => void;
+  onSaveSuccess?: () => void;
   isRedactedUnlocked: boolean;
   setIsRedactedUnlocked: (value: boolean) => void;
   onModalToggle?: (isOpen: boolean) => void;
+  onSelectNode?: (nodeId: string) => void;
+  onExpand?: () => void;
 };
 
 function NodeEditor({
@@ -121,6 +52,8 @@ function NodeEditor({
   isRedactedUnlocked,
   setIsRedactedUnlocked,
   onModalToggle,
+  onSelectNode,
+  onExpand,
 }: NodeEditorProps) {
   const [node, setNode] = useState<Node | null>(null);
   const [editTitle, setEditTitle] = useState("");
@@ -150,6 +83,7 @@ function NodeEditor({
   const [doorLabelInput, setDoorLabelInput] = useState("");
   const [repointDoorId, setRepointDoorId] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
+  const [lastInitializedNodeId, setLastInitializedNodeId] = useState<string | null>(null);
   const [editPriorityProfile, setEditPriorityProfile] = useState("standard");
   const [editFrozen, setEditFrozen] = useState(false);
   const [status, setStatus] = useState<string>("");
@@ -159,15 +93,6 @@ function NodeEditor({
   const saveRunIdRef = useRef(0);
   const saveStatusTimeoutRef = useRef<number | null>(null);
 
-  // --- Wikilink autocomplete state ---
-  const [wikilinkOpen, setWikilinkOpen] = useState(false);
-  const [wikilinkQuery, setWikilinkQuery] = useState("");
-  const [wikilinkCursorPos, setWikilinkCursorPos] = useState(0);
-  const [wikilinkDropdownPos, setWikilinkDropdownPos] = useState<{
-    top: number;
-    left: number;
-  } | null>(null);
-  const detailRef = useRef<HTMLTextAreaElement | null>(null);
   const allNodesRef = useRef<Node[]>([]);
 
   async function refreshAvailableTags() {
@@ -209,10 +134,13 @@ function NodeEditor({
 
   /** Parse all [[Name]] references from a string. */
   function parseWikilinks(text: string): string[] {
+    if (!text) return [];
+    // Restrict input length to prevent CPU thread exhaustion / ReDoS on large text payloads
+    const safeText = text.length > 50000 ? text.slice(0, 50000) : text;
     const regex = /\[\[([^\]]+)\]\]/g;
     const names: string[] = [];
     let m: RegExpExecArray | null;
-    while ((m = regex.exec(text)) !== null) {
+    while ((m = regex.exec(safeText)) !== null) {
       names.push(m[1]);
     }
     return names;
@@ -271,10 +199,6 @@ function NodeEditor({
     if (!selectedNodeId) {
       const clearTimer = window.setTimeout(() => {
         setNode(null);
-        setEditTitle("");
-        setEditSummary("");
-        setEditDetail("");
-        setEditPrivacy("open");
         setNodeTags([]);
         setOutgoingDoors([]);
         setIncomingDoors([]);
@@ -311,6 +235,7 @@ function NodeEditor({
         }
         setVaults(vaultsList);
         setNode(node);
+
         if (tagsResult.error) {
           setStatus(tagsResult.error.message);
         } else {
@@ -408,14 +333,25 @@ function NodeEditor({
     return getPrivacyDisplaySummary(summary, tier, isRedactedUnlocked);
   }
 
+  useEffect(
+    () => () => {
+      if (saveStatusTimeoutRef.current !== null) {
+        window.clearTimeout(saveStatusTimeoutRef.current);
+      }
+    },
+    []
+  );
+
   useEffect(() => {
-    const syncTimer = window.setTimeout(() => {
-      setEditTitle(node?.title ?? "");
-      setEditSummary(node?.summary ?? "");
-      setEditDetail(node?.detail ?? "");
-      setEditPrivacy(node?.privacyTier ?? "open");
+    /* eslint-disable react-hooks/set-state-in-effect */
+    if (node && node.id === selectedNodeId && lastInitializedNodeId !== selectedNodeId) {
+      setLastInitializedNodeId(selectedNodeId);
+      setEditTitle(node.title ?? "");
+      setEditSummary(node.summary ?? "");
+      setEditDetail(node.detail ?? "");
+      setEditPrivacy(node.privacyTier ?? "open");
       try {
-        const parsed = node?.priority
+        const parsed = node.priority
           ? typeof node.priority === "string"
             ? JSON.parse(node.priority)
             : node.priority
@@ -432,19 +368,19 @@ function NodeEditor({
         );
       } catch {
         setEditPriorityProfile("standard");
+        setEditFrozen(false);
       }
-    }, 0);
-    return () => clearTimeout(syncTimer);
-  }, [node]);
-
-  useEffect(
-    () => () => {
-      if (saveStatusTimeoutRef.current !== null) {
-        window.clearTimeout(saveStatusTimeoutRef.current);
-      }
-    },
-    []
-  );
+    } else if (!selectedNodeId && lastInitializedNodeId !== null) {
+      setLastInitializedNodeId(null);
+      setEditTitle("");
+      setEditSummary("");
+      setEditDetail("");
+      setEditPrivacy("open");
+      setEditPriorityProfile("standard");
+      setEditFrozen(false);
+    }
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, [selectedNodeId, node, lastInitializedNodeId]);
 
   useEffect(() => {
     if (!selectedNodeId || !node) {
@@ -529,7 +465,7 @@ function NodeEditor({
           // Sync wikilink [[NodeName]] references to Doors
           void syncWikilinkDoors(selectedNodeId, editDetail);
           setSaveStatus("saved");
-          onSaveSuccess();
+          onSaveSuccess?.();
           if (saveStatusTimeoutRef.current !== null) {
             window.clearTimeout(saveStatusTimeoutRef.current);
           }
@@ -646,85 +582,6 @@ function NodeEditor({
       );
     });
   }, [allNodes, connectedTargetIds, doorSearchQuery, node]);
-
-  // --- Wikilink autocomplete suggestions ---
-  const wikilinkSuggestions = useMemo(() => {
-    if (!wikilinkOpen || !node) return [];
-    const q = wikilinkQuery.toLowerCase();
-    return allNodes
-      .filter((n) => n.id !== node.id && n.title.toLowerCase().includes(q))
-      .slice(0, 8);
-  }, [allNodes, node, wikilinkOpen, wikilinkQuery]);
-
-  // --- Wikilink helpers ---
-
-  /** Handle keystrokes in the detail textarea for [[ trigger. */
-  function onDetailKeyUp(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    const ta = e.currentTarget;
-    const pos = ta.selectionStart;
-    const text = ta.value;
-
-    // Look backward from cursor for an unclosed [[
-    const before = text.slice(0, pos);
-    const openIdx = before.lastIndexOf("[[");
-    if (openIdx === -1) {
-      if (wikilinkOpen) setWikilinkOpen(false);
-      return;
-    }
-
-    // Make sure there's no ]] between [[ and cursor
-    const segment = before.slice(openIdx + 2);
-    if (segment.includes("]]")) {
-      if (wikilinkOpen) setWikilinkOpen(false);
-      return;
-    }
-
-    // We have an open [[ — compute the query and dropdown position
-    setWikilinkQuery(segment);
-    setWikilinkCursorPos(pos);
-    setWikilinkOpen(true);
-
-    // Position dropdown relative to the textarea
-    const coords = getCaretCoordinates(ta, pos);
-    setWikilinkDropdownPos(coords);
-  }
-
-  /** Insert the selected wikilink into the detail textarea. */
-  function insertWikilink(targetNode: Node) {
-    const ta = detailRef.current;
-    if (!ta) return;
-
-    const text = editDetail;
-    const pos = wikilinkCursorPos;
-    const before = text.slice(0, pos);
-    const openIdx = before.lastIndexOf("[[");
-    if (openIdx === -1) return;
-
-    const replacement = `[[${targetNode.title}]]`;
-    const newText = text.slice(0, openIdx) + replacement + text.slice(pos);
-    setEditDetail(newText);
-    setWikilinkOpen(false);
-    setWikilinkQuery("");
-
-    // Also immediately create the Door if it doesn't exist
-    if (node && !connectedTargetIds.has(targetNode.id)) {
-      void createDoor({
-        sourceNodeId: node.id,
-        targetNodeId: targetNode.id,
-      }).then((result) => {
-        if (!result.error && node) {
-          void refreshDoors(node.id);
-        }
-      });
-    }
-
-    // Restore cursor position after React re-render
-    const newCursorPos = openIdx + replacement.length;
-    requestAnimationFrame(() => {
-      ta.focus();
-      ta.setSelectionRange(newCursorPos, newCursorPos);
-    });
-  }
 
   const { parentTier, effectivePrivacyTier } = useMemo(() => {
     if (!node) {
@@ -966,7 +823,7 @@ function NodeEditor({
         setStatus("Node could not be deleted.");
         return;
       }
-      onNodeDeleted(selectedNodeId);
+      onNodeDeleted?.(selectedNodeId);
       setStatus("Deleted.");
       closeDeleteModal();
     } catch (err) {
@@ -1204,57 +1061,15 @@ function NodeEditor({
                   {lockError && <p className="redacted-lock-error">{lockError}</p>}
                 </div>
               ) : (
-                <div className="wikilink-wrapper">
-                  <textarea
-                    ref={detailRef}
-                    className="editor-detail"
-                    value={editDetail}
-                    onChange={(e) => setEditDetail(e.target.value)}
-                    onKeyUp={onDetailKeyUp}
-                    onScroll={(e) => {
-                      if (wikilinkOpen) {
-                        const ta = e.currentTarget;
-                        const coords = getCaretCoordinates(ta, ta.selectionStart);
-                        setWikilinkDropdownPos(coords);
-                      }
-                    }}
-                    onBlur={() => {
-                      window.setTimeout(() => setWikilinkOpen(false), 150);
-                    }}
-                    placeholder="Detail — type [[ to link to another node"
-                  />
-                  {wikilinkOpen && wikilinkSuggestions.length > 0 && (
-                    <div
-                      className="wikilink-dropdown"
-                      style={
-                        wikilinkDropdownPos
-                          ? {
-                              position: "absolute",
-                              top: wikilinkDropdownPos.top,
-                              left: wikilinkDropdownPos.left,
-                            }
-                          : undefined
-                      }
-                    >
-                      <div className="wikilink-dropdown-header">Link to node</div>
-                      {wikilinkSuggestions.map((target) => (
-                        <button
-                          key={target.id}
-                          type="button"
-                          className="wikilink-option"
-                          onMouseDown={(e) => e.preventDefault()}
-                          onClick={() => insertWikilink(target)}
-                        >
-                          <span className="wikilink-option-icon">🔗</span>
-                          <span className="wikilink-option-text">
-                            <strong>{getNodeDisplayLabel(target)}</strong>
-                            <small>{getNodeDisplaySummary(target, 50)}</small>
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                <NodeEditorDetail
+                  value={editDetail}
+                  onChange={setEditDetail}
+                  disabled={isAnyLocked}
+                  onExpand={onExpand}
+                  onSelectNode={onSelectNode}
+                  nodeId={node?.id}
+                  onRefreshDoors={() => node?.id && refreshDoors(node.id)}
+                />
               )}
               <div className="connections-section">
                 <div className="connections-header">
@@ -1279,7 +1094,18 @@ function NodeEditor({
                         className={`door-item ${door.status === "orphaned" ? "orphaned" : ""}`}
                       >
                         <div className="door-main">
-                          <strong>{targetTitle}</strong>
+                          {door.status !== "orphaned" && door.targetNodeId ? (
+                            <button
+                              type="button"
+                              className="door-link-btn"
+                              onClick={() => onSelectNode && onSelectNode(door.targetNodeId!)}
+                              title={`Navigate to: ${targetTitle}`}
+                            >
+                              <strong>{targetTitle} ↗</strong>
+                            </button>
+                          ) : (
+                            <strong>{targetTitle}</strong>
+                          )}
                           {door.status === "orphaned" && (
                             <span className="door-orphan-badge">[Orphaned]</span>
                           )}
@@ -1318,7 +1144,14 @@ function NodeEditor({
                       return (
                         <div key={backlink.id} className="door-item">
                           <div className="door-main">
-                            <strong>{sourceTitle}</strong>
+                            <button
+                              type="button"
+                              className="door-link-btn"
+                              onClick={() => onSelectNode && onSelectNode(backlink.sourceNodeId)}
+                              title={`Navigate to: ${sourceTitle}`}
+                            >
+                              <strong>{sourceTitle} ↗</strong>
+                            </button>
                             <span className="door-label">Incoming</span>
                           </div>
                         </div>

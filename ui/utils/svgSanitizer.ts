@@ -7,3 +7,78 @@ export function sanitizeSvgText(text: string): string {
   if (!text) return "";
   return text.replace(/[^a-zA-Z0-9\- ]/g, "");
 }
+
+function stripWhitespaceAndControlChars(value: string): string {
+  let result = "";
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    if (code <= 32 || (code >= 127 && code <= 159)) {
+      continue;
+    }
+    result += value[index];
+  }
+  return result.toLowerCase();
+}
+
+/**
+ * Sanitizes an untrusted SVG XML string, removing any <script> tags,
+ * event handler attributes, and javascript: links to prevent XSS.
+ */
+export function sanitizeSvg(svgMarkup: string): string {
+  if (!svgMarkup) return "";
+  try {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(svgMarkup, "image/svg+xml");
+
+    const parserError = doc.querySelector("parsererror");
+    if (parserError) {
+      return "";
+    }
+
+    // 1. Remove all dangerous elements
+    const dangerousTags = ["script", "iframe", "embed", "object", "foreignobject", "link", "meta"];
+    for (const tag of dangerousTags) {
+      const elements = doc.getElementsByTagName(tag);
+      while (elements.length > 0) {
+        elements[0].parentNode?.removeChild(elements[0]);
+      }
+    }
+
+    // 2. Remove all event handlers and strictly validate URL attributes
+    const allElements = doc.getElementsByTagName("*");
+    for (let i = 0; i < allElements.length; i++) {
+      const el = allElements[i];
+      const attrs = Array.from(el.attributes);
+      for (const attr of attrs) {
+        const attrName = attr.name.toLowerCase();
+        const attrVal = attr.value;
+        const valClean = stripWhitespaceAndControlChars(attrVal.trim());
+        const isUrlAttribute =
+          attrName === "href" ||
+          attrName === "xlink:href" ||
+          attrName === "src" ||
+          attrName.endsWith(":href");
+
+        if (attrName.startsWith("on")) {
+          el.removeAttribute(attr.name);
+          continue;
+        }
+
+        if (isUrlAttribute) {
+          // Strict URL allowlist: Only allow local references (starting with "#") or safe inline data:image/ images.
+          // Everything else (e.g. http:, https:, javascript:, data:text/html, etc.) is stripped.
+          const isAllowedUrl = valClean.startsWith("#") || valClean.startsWith("data:image/");
+          if (!isAllowedUrl) {
+            el.removeAttribute(attr.name);
+          }
+        }
+      }
+    }
+
+    const serializer = new XMLSerializer();
+    return doc.documentElement ? serializer.serializeToString(doc) : "";
+  } catch (err) {
+    console.error("SVG sanitization failed:", err);
+    return "";
+  }
+}

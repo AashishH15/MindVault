@@ -1,13 +1,14 @@
+use std::collections::HashSet;
 use std::sync::OnceLock;
 
 use rusqlite::Connection;
-use serde_json::Value;
 use tiktoken_rs::CoreBPE;
 
 use crate::privacy::{generate_pointer_stub, get_effective_privacy};
 
 const ATTENTION_SINK_TOKENS: usize = 50;
 const FALLBACK_CHARS_PER_TOKEN_EST: usize = 4;
+const SQLITE_IN_CLAUSE_BATCH_SIZE: usize = 900;
 
 fn cl100k_bpe() -> &'static CoreBPE {
     static BPE: OnceLock<CoreBPE> = OnceLock::new();
@@ -70,13 +71,6 @@ struct AssemblerNode {
     node_privacy_tier: Option<String>,
     sub_vault_privacy_tier: Option<String>,
     vault_privacy_tier: Option<String>,
-    score: f64,
-}
-
-fn parse_score(priority_json: &str) -> f64 {
-    let parsed: Value =
-        serde_json::from_str(priority_json).unwrap_or_else(|_| serde_json::json!({}));
-    parsed.get("score").and_then(|v| v.as_f64()).unwrap_or(0.1)
 }
 
 fn escape_xml_attr(value: &str) -> String {
@@ -88,12 +82,27 @@ fn escape_xml_attr(value: &str) -> String {
         .replace('\'', "&apos;")
 }
 
+fn escape_xml_body(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
 fn fetch_requested_nodes(
     db: &Connection,
     node_ids: &[String],
 ) -> Result<Vec<AssemblerNode>, crate::AppError> {
-    let mut statement = db
-        .prepare(
+    if node_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut nodes = Vec::new();
+    let mut seen_ids = HashSet::new();
+
+    for chunk in node_ids.chunks(SQLITE_IN_CLAUSE_BATCH_SIZE) {
+        let placeholders = vec!["?"; chunk.len()].join(", ");
+        let query_str = format!(
             "SELECT n.id,
                     n.title,
                     n.summary,
@@ -110,57 +119,69 @@ fn fetch_requested_nodes(
              LEFT JOIN vaults v
                ON v.id = n.vault_id
               AND v.deleted_at IS NULL
-             WHERE n.id = ?1
+             WHERE n.id IN ({placeholders})
                AND n.deleted_at IS NULL
-               AND n.is_archived = 0;",
-        )
-        .map_err(|err| format!("Failed preparing assembler query: {err}"))?;
+               AND n.is_archived = 0;"
+        );
 
-    let mut nodes = Vec::new();
-    for node_id in node_ids {
+        let mut statement = db
+            .prepare(&query_str)
+            .map_err(|err| format!("Failed preparing assembler query: {err}"))?;
+
+        let params: Vec<&dyn rusqlite::ToSql> =
+            chunk.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
+
         let mut rows = statement
-            .query([node_id.as_str()])
-            .map_err(|err| format!("Failed querying node {node_id} for assembler: {err}"))?;
-        let maybe_row = rows
+            .query(rusqlite::params_from_iter(params))
+            .map_err(|err| format!("Failed querying nodes for assembler: {err}"))?;
+
+        while let Some(row) = rows
             .next()
-            .map_err(|err| format!("Failed reading assembler row for node {node_id}: {err}"))?;
-        if let Some(row) = maybe_row {
-            let priority_json: String = row.get(6).map_err(|err| {
-                format!("Failed decoding priority field for node {node_id} in assembler: {err}")
-            })?;
+            .map_err(|err| format!("Failed reading assembler row: {err}"))?
+        {
+            let id: String = row
+                .get(0)
+                .map_err(|err| format!("Failed decoding id field in assembler: {err}"))?;
+            if !seen_ids.insert(id.clone()) {
+                continue;
+            }
             nodes.push(AssemblerNode {
-                id: row.get(0).map_err(|err| {
-                    format!("Failed decoding id field for node {node_id} in assembler: {err}")
-                })?,
-                title: row.get(1).map_err(|err| {
-                    format!("Failed decoding title field for node {node_id} in assembler: {err}")
-                })?,
-                summary: row.get(2).map_err(|err| {
-                    format!("Failed decoding summary field for node {node_id} in assembler: {err}")
-                })?,
-                detail: row.get(3).map_err(|err| {
-                    format!("Failed decoding detail field for node {node_id} in assembler: {err}")
-                })?,
+                id,
+                title: row
+                    .get(1)
+                    .map_err(|err| format!("Failed decoding title field in assembler: {err}"))?,
+                summary: row
+                    .get(2)
+                    .map_err(|err| format!("Failed decoding summary field in assembler: {err}"))?,
+                detail: row
+                    .get(3)
+                    .map_err(|err| format!("Failed decoding detail field in assembler: {err}"))?,
                 node_privacy_tier: row.get(4).map_err(|err| {
-                    format!(
-                        "Failed decoding node privacy field for node {node_id} in assembler: {err}"
-                    )
+                    format!("Failed decoding node privacy field in assembler: {err}")
                 })?,
                 sub_vault_privacy_tier: row.get(7).map_err(|err| {
-                    format!(
-                        "Failed decoding sub-vault privacy field for node {node_id} in assembler: {err}"
-                    )
+                    format!("Failed decoding sub-vault privacy field in assembler: {err}")
                 })?,
                 vault_privacy_tier: row.get(8).map_err(|err| {
-                    format!(
-                        "Failed decoding vault privacy field for node {node_id} in assembler: {err}"
-                    )
+                    format!("Failed decoding vault privacy field in assembler: {err}")
                 })?,
-                score: parse_score(&priority_json),
             });
         }
     }
-    Ok(nodes)
+
+    let mut nodes_map: std::collections::HashMap<String, AssemblerNode> = nodes
+        .into_iter()
+        .map(|node| (node.id.clone(), node))
+        .collect();
+
+    let mut sorted_nodes = Vec::with_capacity(node_ids.len());
+    for id in node_ids {
+        if let Some(node) = nodes_map.remove(id) {
+            sorted_nodes.push(node);
+        }
+    }
+
+    Ok(sorted_nodes)
 }
 
 pub fn build_context(
@@ -168,8 +189,7 @@ pub fn build_context(
     node_ids: Vec<String>,
     config: AssemblerConfig,
 ) -> Result<String, crate::AppError> {
-    let mut nodes = fetch_requested_nodes(db, &node_ids)?;
-    nodes.sort_by(|a, b| b.score.total_cmp(&a.score));
+    let nodes = fetch_requested_nodes(db, &node_ids)?;
 
     let mut assembled = String::new();
 
@@ -187,8 +207,8 @@ pub fn build_context(
                         format!(
                             "<document title=\"{}\">\n{}\n\n{}\n</document>",
                             escape_xml_attr(&node.title),
-                            node.summary,
-                            node.detail
+                            escape_xml_body(&node.summary),
+                            escape_xml_body(&node.detail)
                         )
                     }
                     "locked" => generate_pointer_stub(&node.title, &node.id),
@@ -204,8 +224,8 @@ pub fn build_context(
                         format!(
                             "<document title=\"{}\">\n{}\n\n{}\n</document>",
                             escape_xml_attr(&node.title),
-                            node.summary,
-                            node.detail
+                            escape_xml_body(&node.summary),
+                            escape_xml_body(&node.detail)
                         )
                     }
                     "locked" => {
@@ -213,8 +233,8 @@ pub fn build_context(
                             format!(
                                 "<document title=\"{}\">\n{}\n\n{}\n</document>",
                                 escape_xml_attr(&node.title),
-                                node.summary,
-                                node.detail
+                                escape_xml_body(&node.summary),
+                                escape_xml_body(&node.detail)
                             )
                         } else {
                             generate_pointer_stub(&node.title, &node.id)
@@ -232,8 +252,8 @@ pub fn build_context(
                         format!(
                             "<document title=\"{}\">\n{}\n\n{}\n</document>",
                             escape_xml_attr(&node.title),
-                            node.summary,
-                            node.detail
+                            escape_xml_body(&node.summary),
+                            escape_xml_body(&node.detail)
                         )
                     }
                     _ => {
@@ -267,10 +287,11 @@ pub fn build_context(
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::{
-        build_context, count_tokens, trim_tail_with_attention_sink, AssemblerConfig,
-        ATTENTION_SINK_TOKENS,
+        build_context, count_tokens, fetch_requested_nodes, trim_tail_with_attention_sink,
+        AssemblerConfig, ATTENTION_SINK_TOKENS, SQLITE_IN_CLAUSE_BATCH_SIZE,
     };
     use rusqlite::Connection;
 
@@ -520,5 +541,126 @@ mod tests {
 
         let direct = trim_tail_with_attention_sink(&full, 120);
         assert_eq!(direct, trimmed);
+    }
+
+    #[test]
+    fn fetch_requested_nodes_chunks_large_in_lists() {
+        let conn = setup_in_memory_db();
+
+        for index in 0..(SQLITE_IN_CLAUSE_BATCH_SIZE + 25) {
+            let node_id = format!("node_extra_{index}");
+            let title = format!("Extra Node {index}");
+            let summary = format!("Extra summary {index}");
+            let detail = format!("Extra detail {index}");
+            let priority = format!("{{\"score\":{}}}", index as f64 / 1000.0);
+            if let Err(err) = conn.execute(
+                "INSERT INTO nodes (
+                    id, vault_id, sub_vault_id, title, summary, detail, privacy_tier, priority, is_archived, deleted_at
+                ) VALUES (?1, ?2, NULL, ?3, ?4, ?5, ?6, ?7, 0, NULL);",
+                [
+                    node_id.as_str(),
+                    "vault_a",
+                    title.as_str(),
+                    summary.as_str(),
+                    detail.as_str(),
+                    "open",
+                    priority.as_str(),
+                ],
+            ) {
+                panic!("failed inserting extra node for assembler batching test: {err}");
+            }
+        }
+
+        let mut node_ids = Vec::new();
+        for index in 0..(SQLITE_IN_CLAUSE_BATCH_SIZE + 25) {
+            node_ids.push(format!("node_extra_{index}"));
+        }
+
+        let nodes = match fetch_requested_nodes(&conn, &node_ids) {
+            Ok(value) => value,
+            Err(err) => panic!("batched fetch_requested_nodes failed: {err}"),
+        };
+
+        assert_eq!(nodes.len(), SQLITE_IN_CLAUSE_BATCH_SIZE + 25);
+        assert!(nodes.iter().any(|node| node.id == "node_extra_0"));
+        assert!(nodes
+            .iter()
+            .any(|node| node.id == format!("node_extra_{}", SQLITE_IN_CLAUSE_BATCH_SIZE + 24)));
+    }
+
+    #[test]
+    fn test_assembler_preserves_relevance_ordering() {
+        let conn = setup_in_memory_db();
+        // Insert nodes with different priority values to make sure priority sorting
+        // is overridden by relevance ordering
+        let node_ids = vec!["node_locked".to_string(), "node_local_only".to_string()];
+
+        let nodes = fetch_requested_nodes(&conn, &node_ids).unwrap();
+        assert_eq!(nodes.len(), 2);
+        assert_eq!(nodes[0].id, "node_locked");
+        assert_eq!(nodes[1].id, "node_local_only");
+
+        let context = build_context(
+            &conn,
+            node_ids,
+            AssemblerConfig {
+                scope: "local".to_string(),
+                max_tokens: 4000,
+                is_unlocked: true,
+            },
+        )
+        .unwrap();
+
+        // The assembled context should contain Locked Node document before Local Only Node document
+        let pos_locked = context.find("title=\"Locked Node\"").unwrap();
+        let pos_local = context.find("title=\"Local Only Node\"").unwrap();
+        assert!(
+            pos_locked < pos_local,
+            "Locked Node should come before Local Only Node to preserve relevance ordering!"
+        );
+    }
+
+    #[test]
+    fn test_xml_escaping_behavior() {
+        let conn = setup_in_memory_db();
+        // Insert a node with special characters in title, summary, and detail
+        if let Err(err) = conn.execute(
+            "INSERT INTO nodes (
+                id, vault_id, sub_vault_id, title, summary, detail, privacy_tier, priority, is_archived, deleted_at
+            ) VALUES (?1, ?2, NULL, ?3, ?4, ?5, ?6, ?7, 0, NULL);",
+            [
+                "node_escaping_test",
+                "vault_a",
+                "Testing \"Quotes\" & <Tags> 'Single'",
+                "Summary with & < > \"Quotes\" and 'Single'",
+                "Detail with & < > \"Quotes\" and 'Single'",
+                "open",
+                "{\"score\":0.5}",
+            ],
+        ) {
+            panic!("failed inserting extra node for escaping test: {err}");
+        }
+
+        let context = build_context(
+            &conn,
+            vec!["node_escaping_test".to_string()],
+            AssemblerConfig {
+                scope: "local".to_string(),
+                max_tokens: 4000,
+                is_unlocked: false,
+            },
+        )
+        .unwrap();
+
+        // Title is an attribute and must be fully escaped (including quotes)
+        assert!(context.contains(
+            "title=\"Testing &quot;Quotes&quot; &amp; &lt;Tags&gt; &apos;Single&apos;\""
+        ));
+
+        // Summary is in the body: &, <, > must be escaped; quotes must NOT be escaped
+        assert!(context.contains("Summary with &amp; &lt; &gt; \"Quotes\" and 'Single'"));
+
+        // Detail is in the body: &, <, > must be escaped; quotes must NOT be escaped
+        assert!(context.contains("Detail with &amp; &lt; &gt; \"Quotes\" and 'Single'"));
     }
 }

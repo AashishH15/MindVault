@@ -1,10 +1,9 @@
-import { settingsGet, settingsSet } from "../ipc";
-import { unwrapIpcResult } from "../services/ipcResult";
+import { settingsGet, settingsSet } from "../ipc.ts";
+import { unwrapIpcResult } from "../services/ipcResult.ts";
 
 const LLM_PROVIDER_KEY = "mindvault.llm.provider";
 const OLLAMA_ENDPOINT_KEY = "mindvault.llm.ollama.endpoint";
 const LMSTUDIO_ENDPOINT_KEY = "mindvault.llm.lmstudio.endpoint";
-const LEGACY_LLM_MODEL_KEY = "mindvault.llm.model";
 const DEFAULT_PROVIDER = "ollama";
 const DEFAULT_OLLAMA_ENDPOINT = "http://localhost:11434";
 const DEFAULT_LMSTUDIO_ENDPOINT = "http://localhost:1234";
@@ -61,20 +60,7 @@ export function setLmStudioEndpoint(url: string): void {
 export function getLlmModel(provider?: string): string {
   const p = provider || getLlmProvider();
   const providerKey = `mindvault.llm.${p}.model`;
-  const existing = window.localStorage.getItem(providerKey);
-
-  if (existing) {
-    return existing;
-  }
-
-  const legacy = window.localStorage.getItem(LEGACY_LLM_MODEL_KEY);
-  if (legacy) {
-    window.localStorage.setItem(providerKey, legacy);
-    window.localStorage.removeItem(LEGACY_LLM_MODEL_KEY);
-    return legacy;
-  }
-
-  return "";
+  return window.localStorage.getItem(providerKey) || "";
 }
 
 export function setLlmModel(provider: string, model: string): void {
@@ -113,5 +99,78 @@ export async function getApiKey(provider: string): Promise<string> {
 
 export async function setApiKey(provider: string, key: string): Promise<void> {
   await unwrapIpcResult(settingsSet(`mindvault.llm.${provider}.apikey`, key.trim()));
+  window.dispatchEvent(new CustomEvent("mindvault:llm-settings-changed"));
+}
+
+const CHARTS_ENABLED_KEY = "mindvault.llm.charts.enabled";
+const CHAT_CHARTS_ENABLED_KEY = "mindvault.llm.charts.chat.enabled";
+const NODE_EDITOR_CHARTS_ENABLED_KEY = "mindvault.llm.charts.nodeeditor.enabled";
+
+export function getChartsEnabled(): boolean {
+  const value = window.localStorage.getItem(CHARTS_ENABLED_KEY);
+  return value === "true";
+}
+
+export function setChartsEnabled(enabled: boolean): void {
+  window.localStorage.setItem(CHARTS_ENABLED_KEY, enabled ? "true" : "false");
+  window.dispatchEvent(new CustomEvent("mindvault:llm-settings-changed"));
+}
+
+export function getChatChartsEnabled(): boolean {
+  const value = window.localStorage.getItem(CHAT_CHARTS_ENABLED_KEY);
+  return value === "true";
+}
+
+export function setChatChartsEnabled(enabled: boolean): void {
+  window.localStorage.setItem(CHAT_CHARTS_ENABLED_KEY, enabled ? "true" : "false");
+  window.dispatchEvent(new CustomEvent("mindvault:llm-settings-changed"));
+}
+
+export function getNodeEditorChartsEnabled(): boolean {
+  const value = window.localStorage.getItem(NODE_EDITOR_CHARTS_ENABLED_KEY);
+  return value === "true";
+}
+
+export function setNodeEditorChartsEnabled(enabled: boolean): void {
+  window.localStorage.setItem(NODE_EDITOR_CHARTS_ENABLED_KEY, enabled ? "true" : "false");
+  window.dispatchEvent(new CustomEvent("mindvault:llm-settings-changed"));
+}
+
+const PLANTUML_SERVER_KEY = "mindvault.llm.plantuml.server";
+const DEFAULT_PLANTUML_SERVER = "https://www.plantuml.com/plantuml";
+
+export function getPlantUmlServer(): string {
+  const value = window.localStorage.getItem(PLANTUML_SERVER_KEY);
+  if (!value || !value.trim()) {
+    return DEFAULT_PLANTUML_SERVER;
+  }
+  return value.trim();
+}
+
+export function setPlantUmlServer(url: string): void {
+  let normalized = url.trim();
+  if (!normalized) {
+    normalized = DEFAULT_PLANTUML_SERVER;
+  } else {
+    // 1. If it doesn't start with http:// or https://, prepend https:// by default
+    if (!/^https?:\/\//i.test(normalized)) {
+      normalized = "https://" + normalized;
+    }
+
+    // 2. Validate URL format and restrict to HTTP/HTTPS schemes to prevent arbitrary injection
+    try {
+      const parsed = new URL(normalized);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+        normalized = DEFAULT_PLANTUML_SERVER;
+      } else {
+        // Strip trailing slashes to ensure clean path concatenation later
+        normalized = parsed.origin + parsed.pathname.replace(/\/+$/, "");
+      }
+    } catch {
+      normalized = DEFAULT_PLANTUML_SERVER;
+    }
+  }
+
+  window.localStorage.setItem(PLANTUML_SERVER_KEY, normalized);
   window.dispatchEvent(new CustomEvent("mindvault:llm-settings-changed"));
 }
