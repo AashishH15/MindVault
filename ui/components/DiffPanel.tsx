@@ -1,0 +1,402 @@
+import { useEffect, useState } from "react";
+import {
+  listPendingChangesets,
+  listResolvedChangesets,
+  listChangesetItems,
+} from "../services/memoryAgent";
+import { type Changeset, type ChangesetItem } from "../ipc";
+import "../style/components/DiffPanel.css";
+
+interface DiffPanelProps {
+  onClose: () => void;
+  activeChangesetId: string | null;
+  onSelectChangeset: (id: string | null) => void;
+}
+
+export default function DiffPanel({
+  onClose,
+  activeChangesetId,
+  onSelectChangeset,
+}: DiffPanelProps) {
+  const [activeTab, setActiveTab] = useState<"pending" | "history">("pending");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [changesets, setChangesets] = useState<Changeset[]>([]);
+  const [items, setItems] = useState<ChangesetItem[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [isClosing, setIsClosing] = useState(false);
+
+  const handleClose = () => {
+    setIsClosing(true);
+    setTimeout(() => {
+      onClose();
+    }, 250);
+  };
+
+  // Load changesets on mount, tab switch, or when the activeChangesetId changes to null
+  useEffect(() => {
+    let active = true;
+    const fetchChangesets = async () => {
+      setIsLoading(true);
+      setError(null);
+      try {
+        const data =
+          activeTab === "pending" ? await listPendingChangesets() : await listResolvedChangesets();
+        if (active) {
+          setChangesets(data);
+        }
+      } catch (err) {
+        if (active) {
+          setError(String(err));
+        }
+      } finally {
+        if (active) {
+          setIsLoading(false);
+        }
+      }
+    };
+
+    if (!activeChangesetId) {
+      void fetchChangesets();
+    }
+
+    return () => {
+      active = false;
+    };
+  }, [activeTab, activeChangesetId]);
+
+  // Load items when a changeset is selected
+  useEffect(() => {
+    let active = true;
+    const fetchItems = async () => {
+      if (!activeChangesetId) {
+        setItems([]);
+        return;
+      }
+      setIsLoading(true);
+      setError(null);
+      try {
+        const data = await listChangesetItems(activeChangesetId);
+        if (active) {
+          setItems(data);
+        }
+      } catch (err) {
+        if (active) {
+          setError(String(err));
+        }
+      } finally {
+        if (active) {
+          setIsLoading(false);
+        }
+      }
+    };
+
+    void fetchItems();
+
+    return () => {
+      active = false;
+    };
+  }, [activeChangesetId]);
+
+  // Handle Tab Switching
+  const handleTabChange = (tab: "pending" | "history") => {
+    setActiveTab(tab);
+    onSelectChangeset(null);
+    setSearchQuery("");
+    setSelectedCategory(null);
+  };
+
+  // Safe JSON Parsing for proposed/existing data
+  const parseJSON = (str: string) => {
+    try {
+      return JSON.parse(str);
+    } catch {
+      return {};
+    }
+  };
+
+  // Helper to extract item summary title
+  const getItemTitle = (item: ChangesetItem) => {
+    const data = parseJSON(item.proposedData);
+    if (
+      item.itemType.toLowerCase() === "repoint_door" ||
+      item.itemType.toLowerCase() === "orphan"
+    ) {
+      return `Repoint door #${item.doorId || "unknown"}`;
+    }
+    return data.title || data.summary || `Proposal #${item.id.slice(0, 8)}`;
+  };
+
+  // Filter Changesets
+  const filteredChangesets = changesets.filter((cs) => {
+    const matchSearch =
+      cs.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (cs.modelUsed && cs.modelUsed.toLowerCase().includes(searchQuery.toLowerCase()));
+    return matchSearch;
+  });
+
+  // Filter Changeset Items
+  const filteredItems = items.filter((item) => {
+    const title = getItemTitle(item).toLowerCase();
+    const parsed = parseJSON(item.proposedData);
+    const summary = (parsed.summary || "").toLowerCase();
+    const detail = (parsed.detail || "").toLowerCase();
+    const matchSearch =
+      title.includes(searchQuery.toLowerCase()) ||
+      summary.includes(searchQuery.toLowerCase()) ||
+      detail.includes(searchQuery.toLowerCase());
+
+    const matchCategory =
+      !selectedCategory || item.itemType.toLowerCase() === selectedCategory.toLowerCase();
+
+    return matchSearch && matchCategory;
+  });
+
+  return (
+    <div className={`diff-panel-backdrop ${isClosing ? "closing" : ""}`} onClick={handleClose}>
+      <div
+        className={`diff-panel-drawer ${isClosing ? "closing" : ""}`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="diff-panel-header">
+          <span className="diff-panel-title">
+            {activeChangesetId ? "Changeset Details" : "Memory Proposals"}
+          </span>
+          <button className="diff-panel-close-btn" onClick={handleClose} aria-label="Close panel">
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
+
+        {/* Tab Buttons (Only shown if not drilling down into a changeset) */}
+        {!activeChangesetId && (
+          <div className="diff-panel-tabs">
+            <button
+              className={`diff-panel-tab-btn ${activeTab === "pending" ? "active" : ""}`}
+              onClick={() => handleTabChange("pending")}
+            >
+              Pending
+            </button>
+            <button
+              className={`diff-panel-tab-btn ${activeTab === "history" ? "active" : ""}`}
+              onClick={() => handleTabChange("history")}
+            >
+              History
+            </button>
+          </div>
+        )}
+
+        {/* Filters */}
+        <div className="diff-panel-filters">
+          <div className="diff-panel-search-box">
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="#6b7280"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <circle cx="11" cy="11" r="8" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+            <input
+              type="text"
+              placeholder={activeChangesetId ? "Search changeset items..." : "Search changesets..."}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+          </div>
+
+          {/* Category badges (Only shown when drilling down into changeset items) */}
+          {activeChangesetId && (
+            <div className="diff-panel-category-filters">
+              <button
+                className={`category-filter-btn ${selectedCategory === null ? "active" : ""}`}
+                onClick={() => setSelectedCategory(null)}
+              >
+                ALL
+              </button>
+              <button
+                className={`category-filter-btn ${selectedCategory === "add" ? "active" : ""}`}
+                onClick={() => setSelectedCategory("add")}
+              >
+                ADD
+              </button>
+              <button
+                className={`category-filter-btn ${selectedCategory === "update" ? "active" : ""}`}
+                onClick={() => setSelectedCategory("update")}
+              >
+                UPDATE
+              </button>
+              <button
+                className={`category-filter-btn ${selectedCategory === "merge" ? "active" : ""}`}
+                onClick={() => setSelectedCategory("merge")}
+              >
+                MERGE
+              </button>
+              <button
+                className={`category-filter-btn ${selectedCategory === "delete" ? "active" : ""}`}
+                onClick={() => setSelectedCategory("delete")}
+              >
+                DELETE
+              </button>
+              <button
+                className={`category-filter-btn ${selectedCategory === "repoint_door" || selectedCategory === "orphan" ? "active" : ""}`}
+                onClick={() => setSelectedCategory("repoint_door")}
+              >
+                ORPHAN
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Content Area */}
+        <div className="diff-panel-content">
+          {isLoading && <div className="changeset-list-empty">Loading data...</div>}
+
+          {error && (
+            <div className="changeset-list-empty" style={{ color: "#ef4444" }}>
+              Error: {error}
+            </div>
+          )}
+
+          {!isLoading && !error && (
+            <>
+              {/* CHANGESET LIST MODE */}
+              {!activeChangesetId && (
+                <>
+                  {filteredChangesets.length === 0 ? (
+                    <div className="changeset-list-empty">
+                      <svg
+                        width="32"
+                        height="32"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <rect x="2" y="2" width="20" height="20" rx="5" ry="5" />
+                        <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z" />
+                        <line x1="17.5" y1="6.5" x2="17.51" y2="6.5" />
+                      </svg>
+                      <span>No changesets found</span>
+                    </div>
+                  ) : (
+                    filteredChangesets.map((cs) => (
+                      <div
+                        key={cs.id}
+                        className={`changeset-card ${activeChangesetId === cs.id ? "active" : ""}`}
+                        onClick={() => onSelectChangeset(cs.id)}
+                      >
+                        <div className="changeset-card-header">
+                          <span className="changeset-card-id">Changeset #{cs.id.slice(0, 8)}</span>
+                          <span
+                            className={`changeset-card-status status-${cs.status.toLowerCase()}`}
+                          >
+                            {cs.status}
+                          </span>
+                        </div>
+                        <div className="changeset-card-details">
+                          <div>Proposals: {cs.itemCount}</div>
+                          <div>Model: {cs.modelUsed || "Unknown"}</div>
+                          <div>Accepted: {cs.acceptedCount}</div>
+                          <div>Dismissed: {cs.dismissedCount}</div>
+                        </div>
+                        <div className="changeset-card-time">
+                          <svg
+                            width="12"
+                            height="12"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          >
+                            <circle cx="12" cy="12" r="10" />
+                            <polyline points="12 6 12 12 16 14" />
+                          </svg>
+                          {new Date(cs.createdAt).toLocaleString()}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </>
+              )}
+
+              {/* CHANGESET ITEMS DRILL-DOWN MODE */}
+              {activeChangesetId && (
+                <>
+                  <div style={{ marginBottom: "12px" }}>
+                    <button className="category-filter-btn" onClick={() => onSelectChangeset(null)}>
+                      ← Back to Changesets
+                    </button>
+                  </div>
+
+                  {filteredItems.length === 0 ? (
+                    <div className="changeset-list-empty">
+                      <span>No proposal items match the filters</span>
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                      {/* Detailed diff cards will render here in Commit 4. 
+                          For Commit 3, we render a highly polished list summary with type badges. */}
+                      {filteredItems.map((item) => {
+                        const parsed = parseJSON(item.proposedData);
+                        const typeUpper = item.itemType.toUpperCase();
+                        let badgeClass = "badge-add";
+
+                        if (typeUpper === "UPDATE") {
+                          badgeClass = "badge-update";
+                        } else if (typeUpper === "MERGE") {
+                          badgeClass = "badge-merge";
+                        } else if (typeUpper === "DELETE") {
+                          badgeClass = "badge-delete";
+                        } else if (typeUpper === "REPOINT_DOOR" || typeUpper === "ORPHAN") {
+                          badgeClass = "badge-orphan";
+                        }
+
+                        return (
+                          <div key={item.id} className="changeset-item-card">
+                            <div className="changeset-item-header">
+                              <span className={`changeset-item-badge ${badgeClass}`}>
+                                {typeUpper === "REPOINT_DOOR" ? "ORPHAN" : typeUpper}
+                              </span>
+                              <span className="changeset-item-status">Status: {item.status}</span>
+                            </div>
+                            <div className="changeset-item-title">{getItemTitle(item)}</div>
+                            {parsed.summary && (
+                              <div className="changeset-item-summary">{parsed.summary}</div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

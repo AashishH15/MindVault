@@ -20,6 +20,7 @@ import {
   setSetting,
 } from "./services/settings";
 import NodeEditorExpanded from "./components/NodeEditorExpanded";
+import DiffPanel from "./components/DiffPanel";
 import styles from "./style/components/MemoryBadge.module.css";
 import { countPendingChangesetItems } from "./services/memoryAgent";
 import "./style/MonoStyles.css";
@@ -30,6 +31,8 @@ function App() {
   const [onboardingBusy, setOnboardingBusy] = useState<boolean>(false);
   const [onboardingError, setOnboardingError] = useState<string | null>(null);
   const [pendingProposalCount, setPendingProposalCount] = useState<number>(0);
+  const [isDiffPanelOpen, setIsDiffPanelOpen] = useState<boolean>(false);
+  const [selectedChangesetId, setSelectedChangesetId] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -476,6 +479,7 @@ function App() {
                   type="button"
                   className={styles.pendingBadge}
                   title="Pending memory proposals"
+                  onClick={() => setIsDiffPanelOpen(true)}
                 >
                   {pendingProposalCount} pending
                 </button>
@@ -710,6 +714,13 @@ function App() {
                 </button>
               )}
             </div>
+            {isDiffPanelOpen && (
+              <DiffPanel
+                onClose={() => setIsDiffPanelOpen(false)}
+                activeChangesetId={selectedChangesetId}
+                onSelectChangeset={setSelectedChangesetId}
+              />
+            )}
           </>
         )}
       </main>
