@@ -13,8 +13,6 @@
 }
 
 .diff-panel-drawer {
-  width: 480px;
-  max-width: 90vw;
   height: 100%;
   background: rgba(253, 252, 250, 0.96);
   backdrop-filter: blur(24px);
@@ -26,6 +24,28 @@
   z-index: 1101;
   transform: translateX(0);
   animation: slideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  position: relative;
+}
+
+.diff-panel-drawer-resize-handle {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: ew-resize;
+  background: transparent;
+  z-index: 1105;
+  transition:
+    background-color 0.2s ease,
+    border-left-color 0.2s ease;
+  border-left: 2px solid transparent;
+}
+
+.diff-panel-drawer-resize-handle:hover,
+.diff-panel-drawer-resize-handle.resizing {
+  background: linear-gradient(90deg, rgba(188, 108, 37, 0.06) 0%, transparent 100%);
+  border-left-color: var(--primary-color);
 }
 
 @keyframes fadeIn {
@@ -236,6 +256,7 @@
   gap: 12px;
   position: relative;
   overflow: hidden;
+  flex-shrink: 0;
 }
 
 .changeset-card::after {
@@ -429,4 +450,151 @@
   to {
     transform: translateX(100%);
   }
+}
+
+/* DiffRow Layout & Comparison Grid Styling */
+.diff-row-container {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: rgba(255, 255, 255, 0.45);
+  border: 1px solid #eae7e2;
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 12px;
+  flex-shrink: 0;
+}
+
+.diff-row-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.diff-row-comparison-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+
+@media (max-width: 600px) {
+  .diff-row-comparison-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.diff-card {
+  background: rgba(253, 252, 250, 0.85);
+  border: 1px solid rgba(188, 108, 37, 0.12);
+  border-radius: 10px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-shadow: 0 2px 6px rgba(188, 108, 37, 0.03);
+}
+
+.diff-card.proposed {
+  border-color: rgba(188, 108, 37, 0.2);
+}
+
+.diff-card-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-bottom: 1px solid rgba(188, 108, 37, 0.06);
+  padding-bottom: 8px;
+}
+
+.diff-card-section:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.diff-card-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #7d7a75;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.diff-text-value {
+  font-size: 0.88rem;
+  color: var(--text-black);
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+/* Word-Level Text Diff Highlighting */
+.diff-highlight-insert {
+  background-color: rgba(16, 185, 129, 0.15);
+  color: #047857;
+  padding: 1px 3px;
+  border-radius: 4px;
+  font-weight: 550;
+}
+
+.diff-highlight-delete {
+  background-color: rgba(239, 68, 68, 0.12);
+  color: #b91c1c;
+  text-decoration: line-through;
+  padding: 1px 3px;
+  border-radius: 4px;
+}
+
+/* Tag Diff Decorators */
+.diff-tags-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.diff-tag {
+  font-size: 0.74rem;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: #fcfbfa;
+  border: 1px solid #e1deda;
+  color: #5c5954;
+}
+
+.diff-tag.tag-added {
+  border: 1.5px solid rgba(16, 185, 129, 0.4);
+  background: rgba(16, 185, 129, 0.08);
+  color: #059669;
+  font-weight: 550;
+}
+
+.diff-tag.tag-deleted {
+  border: 1.5px dashed rgba(239, 68, 68, 0.4);
+  background: rgba(239, 68, 68, 0.04);
+  color: #dc2626;
+  text-decoration: line-through;
+}
+
+.diff-tag.tag-unchanged {
+  opacity: 0.85;
+}
+
+/* Deletion Context Evidence Card styling */
+.retraction-note {
+  background: rgba(239, 68, 68, 0.05);
+  border: 1px dashed rgba(239, 68, 68, 0.25);
+  border-radius: 10px;
+  padding: 12px;
+  color: #dc2626;
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+
+/* Orphan Repointing Map Badge styling */
+.orphan-mapping-box {
+  background: rgba(217, 119, 6, 0.05);
+  border: 1px dashed rgba(217, 119, 6, 0.25);
+  border-radius: 10px;
+  padding: 12px;
+  color: #b45309;
+  font-size: 0.86rem;
+  line-height: 1.5;
 }

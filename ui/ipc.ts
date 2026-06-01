@@ -328,3 +328,9 @@ export function changesetListResolved() {
     .then((ok) => ({ ok }) as IpcResult<Changeset[]>)
     .catch((error) => ({ err: String(error) }) as IpcResult<Changeset[]>);
 }
+
+export function debugSeedChangeset() {
+  return invoke<boolean>("debug_seed_changeset")
+    .then((ok) => ({ ok }) as IpcResult<boolean>)
+    .catch((error) => ({ err: String(error) }) as IpcResult<boolean>);
+}

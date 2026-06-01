@@ -5,6 +5,7 @@ import {
   listChangesetItems,
 } from "../services/memoryAgent";
 import { type Changeset, type ChangesetItem } from "../ipc";
+import DiffRow from "./DiffPanel/DiffRow";
 import "../style/components/DiffPanel.css";
 
 interface DiffPanelProps {
@@ -26,6 +27,22 @@ export default function DiffPanel({
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isClosing, setIsClosing] = useState(false);
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const [drawerWidth, setDrawerWidth] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem("mindvault-diff-panel-width");
+      if (saved) {
+        const val = parseInt(saved, 10);
+        if (!isNaN(val) && val >= 400) {
+          return val;
+        }
+      }
+    } catch {
+      // Ignored
+    }
+    return 480;
+  });
+  const [isResizing, setIsResizing] = useState(false);
 
   const handleClose = () => {
     setIsClosing(true);
@@ -34,7 +51,57 @@ export default function DiffPanel({
     }, 250);
   };
 
-  // Load changesets on mount, tab switch, or when the activeChangesetId changes to null
+  const handleMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsResizing(true);
+  };
+
+  // Resizing mouse movement listeners
+  useEffect(() => {
+    if (!isResizing) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const newWidth = window.innerWidth - e.clientX;
+      const minWidth = 400;
+      const maxWidth = window.innerWidth * 0.95;
+      setDrawerWidth(Math.max(minWidth, Math.min(maxWidth, newWidth)));
+    };
+
+    const handleMouseUp = () => {
+      setIsResizing(false);
+      setDrawerWidth((currentWidth) => {
+        try {
+          localStorage.setItem("mindvault-diff-panel-width", String(currentWidth));
+        } catch {
+          // Ignored
+        }
+        return currentWidth;
+      });
+    };
+
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+    document.body.style.userSelect = "none";
+
+    return () => {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+      document.body.style.userSelect = "";
+    };
+  }, [isResizing]);
+
+  // Listen to external seed updates for dynamic UI refresh
+  useEffect(() => {
+    const handleSeeded = () => {
+      setRefreshTrigger((prev) => prev + 1);
+    };
+    window.addEventListener("mindvault-changeset-seeded", handleSeeded);
+    return () => {
+      window.removeEventListener("mindvault-changeset-seeded", handleSeeded);
+    };
+  }, []);
+
+  // Load changesets on mount, tab switch, seed event, or when the activeChangesetId changes to null
   useEffect(() => {
     let active = true;
     const fetchChangesets = async () => {
@@ -64,7 +131,7 @@ export default function DiffPanel({
     return () => {
       active = false;
     };
-  }, [activeTab, activeChangesetId]);
+  }, [activeTab, activeChangesetId, refreshTrigger]);
 
   // Load items when a changeset is selected
   useEffect(() => {
@@ -157,8 +224,18 @@ export default function DiffPanel({
     <div className={`diff-panel-backdrop ${isClosing ? "closing" : ""}`} onClick={handleClose}>
       <div
         className={`diff-panel-drawer ${isClosing ? "closing" : ""}`}
+        style={{
+          width: `${drawerWidth}px`,
+          transition: isResizing ? "none" : undefined,
+        }}
         onClick={(e) => e.stopPropagation()}
       >
+        {/* Resize Handle */}
+        <div
+          className={`diff-panel-drawer-resize-handle ${isResizing ? "resizing" : ""}`}
+          onMouseDown={handleMouseDown}
+        />
+
         {/* Header */}
         <div className="diff-panel-header">
           <span className="diff-panel-title">
@@ -359,36 +436,9 @@ export default function DiffPanel({
                     <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
                       {/* Detailed diff cards will render here in Commit 4. 
                           For Commit 3, we render a highly polished list summary with type badges. */}
-                      {filteredItems.map((item) => {
-                        const parsed = parseJSON(item.proposedData);
-                        const typeUpper = item.itemType.toUpperCase();
-                        let badgeClass = "badge-add";
-
-                        if (typeUpper === "UPDATE") {
-                          badgeClass = "badge-update";
-                        } else if (typeUpper === "MERGE") {
-                          badgeClass = "badge-merge";
-                        } else if (typeUpper === "DELETE") {
-                          badgeClass = "badge-delete";
-                        } else if (typeUpper === "REPOINT_DOOR" || typeUpper === "ORPHAN") {
-                          badgeClass = "badge-orphan";
-                        }
-
-                        return (
-                          <div key={item.id} className="changeset-item-card">
-                            <div className="changeset-item-header">
-                              <span className={`changeset-item-badge ${badgeClass}`}>
-                                {typeUpper === "REPOINT_DOOR" ? "ORPHAN" : typeUpper}
-                              </span>
-                              <span className="changeset-item-status">Status: {item.status}</span>
-                            </div>
-                            <div className="changeset-item-title">{getItemTitle(item)}</div>
-                            {parsed.summary && (
-                              <div className="changeset-item-summary">{parsed.summary}</div>
-                            )}
-                          </div>
-                        );
-                      })}
+                      {filteredItems.map((item) => (
+                        <DiffRow key={item.id} item={item} />
+                      ))}
                     </div>
                   )}
                 </>
